@@ -2,7 +2,7 @@ import random
 import copy
 from collections import deque
 from merge_sim.cards import Card, CARD_STATS, card_to_symbol, BASE_TROOP_STATS
-from merge_sim.visualise import draw_grid, hex_to_pixel, PLAYER_COLOURS
+from merge_sim.visualise import draw_grid, hex_to_pixel, PLAYER_COLOURS, HEX_SIZE
 import pygame
 from collections import deque
 import time
@@ -11,6 +11,8 @@ BOARD_ROWS = 8
 BOARD_COLS = 5
 CRIT_CHANCE = 0.15
 CRIT_MULTIPLIER = 1.5
+
+reserved_positions = set()
 
 class Player:
     def __init__(self, name, deck_manager, bot_logic):
@@ -108,10 +110,10 @@ class Player:
 
     def give_starting_exe(self):
         # Instead of random, always pick "Prince"
-        name = "executioner"
+        name = "mega-knight"
         
         # Assuming Card constructor takes (name, cost, star)
-        card = Card(name, 3, star=1)  # Prince costs 2 elixir, star 1
+        card = Card(name, 4, star=1)  # Prince costs 2 elixir, star 1
         
         unit = CombatUnit(None, None, card, owner=self)
         self.field.append(unit)
@@ -276,14 +278,50 @@ class CombatUnit:
         self.status_effects = {}       # Status effects like stun, poison, etc.
         self.ability_cooldown = 0      # Cooldown for special abilities
         self.last_update_time = 0  # Last time this unit was updated
+
+    def restore_full_health(self):
+        self.current_hp = self.card.health
+        self.alive = True
+        self.status_effects.clear()
     
     def get_position(self):
         return (self.row, self.col)
     
-    def move_to(self, new_row, new_col):
+    def move_to(self, new_row, new_col, grid):
+        rows = len(grid)
+        cols = len(grid[0]) if rows > 0 else 0
+
+        # Check if new position is within bounds
+        if not (0 <= new_row < rows and 0 <= new_col < cols):
+            print(f"❌ ERROR: Attempt to move {self.card.name} to out-of-bounds position ({new_row}, {new_col})")
+            return False
+
+        # Check if the target cell is already occupied by a different unit
+        occupant = grid[new_row][new_col]
+        if occupant is not None and occupant != self:
+            print(f"❌ ERROR: Attempt to move {self.card.name} to occupied cell ({new_row}, {new_col}) by {occupant.card.name}")
+            return False
+
+        # Remove unit from old grid position if valid
+        if self.row is not None and self.col is not None:
+            # Sanity check: ensure the grid cell contains this unit before clearing
+            if grid[self.row][self.col] == self:
+                grid[self.row][self.col] = None
+            else:
+                print(f"⚠️ WARNING: Grid mismatch on clearing old position ({self.row}, {self.col}) for {self.card.name}")
+
+        # Update unit's internal position
         self.row = new_row
         self.col = new_col
-    
+
+        # Place unit in new position on the grid
+        grid[new_row][new_col] = self
+
+        print(f"DEBUG: Placed {self.card.name} at ({self.row}, {self.col})")
+
+        return True
+
+ 
     def get_range(self):
         return getattr(self.card, 'range', 1)
     
@@ -349,8 +387,8 @@ class CombatUnit:
             return self._executioner_attack(primary_target, all_units, combined_grid, base_damage)
         elif unit_name == "princess":
             return self._princess_attack(primary_target, all_units, combined_grid, base_damage)
-        #elif unit_name == "mega-knight":
-        #    return self._mega_knight_attack(primary_target, all_units, base_damage)
+        elif unit_name == "mega-knight":
+            return self._mega_knight_attack(primary_target, all_units, combined_grid, base_damage, reserved_positions)
         #elif unit_name == "royal-ghost":
         #    return self._royal_ghost_attack(primary_target, base_damage)
         #elif unit_name == "bandit":
@@ -527,12 +565,10 @@ class CombatUnit:
         # Now perform the atomic moves: place prince into enemy original, place enemy into fling_pos
         # Clear old positions (they were already cleared for the search)
         # Place prince
-        combined_grid[er][ec] = self
-        self.move_to(er, ec)
+        self.move_to(er, ec, combined_grid)
 
         # Place enemy
-        combined_grid[fling_r][fling_c] = closest_enemy
-        closest_enemy.move_to(fling_r, fling_c)
+        closest_enemy.move_to(fling_r, fling_c, combined_grid)
 
         # Apply stun
         closest_enemy.status_effects['stunned'] = 2.0
@@ -656,45 +692,81 @@ class CombatUnit:
 
         return True
 
-    def _mega_knight_attack(self, target, all_units, base_damage):
+    def _mega_knight_attack(self, target, all_units, combined_grid, base_damage, reserved_positions):
+
         current_time = time.time()
         damage = base_damage
 
+        star_level = getattr(self.card, "star", 1)
+
+        # Map star level to stun radius and jump cooldown (seconds)
+        stun_radius_by_star = {1: 2, 2: 2, 3: 3, 4: 4}
+        jump_cooldown_by_star = {1: 6, 2: 5, 3: 4, 4: 3}
+
+        stun_radius = stun_radius_by_star.get(star_level, 2)
+        jump_cooldown = jump_cooldown_by_star.get(star_level, 6)
+
+        jump_travel_time = 1  # seconds fixed for jump animation
+
+        # Initialize last_jump_time if not set
         if not hasattr(self, 'last_jump_time'):
             self.last_jump_time = 0
 
-        # Check if currently jumping
-        if getattr(self, 'is_jumping', False):
-            # Check if 1 second elapsed since jump started
-            if current_time - self.jump_start_time >= 1:
-                # Finish jump: move to target, stun enemies
-                new_r, new_c = self.jump_target_pos
-                old_pos = (self.row, self.col)
-                self.move_to(new_r, new_c)
-                print(f"🚀 {self.card.name} finishes jump from {old_pos} to {self.jump_target_pos}!")
+        # Initialize jump state attributes if missing
+        if not hasattr(self, 'is_jumping'):
+            self.is_jumping = False
+        if not hasattr(self, 'jump_start_time'):
+            self.jump_start_time = 0
+        if not hasattr(self, 'jump_target_pos'):
+            self.jump_target_pos = None
 
-                stunned_units = get_units_in_radius(self.jump_target_pos, 2, all_units)
+        # Helper: roll crit
+        def roll_crit():
+            return random.random() < CRIT_CHANCE
+
+        # If currently jumping, handle jump progress
+        if self.is_jumping:
+            elapsed = current_time - self.jump_start_time
+            if elapsed >= jump_travel_time:
+                # Finish jump: use move_to() to update position and grid
+                old_pos = (self.row, self.col)
+                new_r, new_c = self.jump_target_pos
+                self.move_to(new_r, new_c, combined_grid)
+                print(f"🚀 {self.card.name} [{self.owner.name}] finishes jump from {old_pos} to {self.jump_target_pos}!")
+
+                # Stun enemies in radius stun_radius (fixed 2 seconds)
+                stunned_units = get_units_in_radius(self.jump_target_pos, stun_radius, all_units)
                 for u in stunned_units:
-                    if u.owner != self.owner:
+                    if u.alive and u.owner != self.owner:
                         u.status_effects['stunned'] = 2.0
-                        print(f"💫 {u.card.name} is stunned for 2 seconds by {self.card.name}!")
+                        print(f"💫 {u.card.name} [{u.owner.name}] is stunned for 2 seconds by {self.card.name} [{self.owner.name}]!")
+
+                # Release reservation of the jump target tile
+                if self.jump_target_pos in reserved_positions:
+                    reserved_positions.remove(self.jump_target_pos)
 
                 self.is_jumping = False
                 self.last_jump_time = current_time
-                return True
+                self.jump_target_pos = None
+                return True  # Jump completed, turn ends here
+
             else:
-                # Still mid-jump: skip normal attack, maybe print or animate jump progress
+                # Still mid-jump, skip attack and movement
                 return False
 
-        # Not currently jumping, check if time to start jump
-        if current_time - self.last_jump_time >= 6:
-            # Find jump target with max neighbors within range 3 (same as before)
+        # Not jumping: check if it's time to start a new jump
+        if current_time - self.last_jump_time >= jump_cooldown:
             max_neighbors = -1
             best_hex = None
 
+            # Search hexes within range 3 for max neighbors AND free hex (no unit occupying, no reservation)
             for r in range(max(0, self.row - 3), min(BOARD_ROWS, self.row + 4)):
                 for c in range(max(0, self.col - 3), min(BOARD_COLS, self.col + 4)):
                     if hex_distance((self.row, self.col), (r, c)) <= 3:
+                        # Check if hex is free and not reserved
+                        if combined_grid[r][c] is not None or (r, c) in reserved_positions:
+                            continue  # Occupied or reserved, skip
+
                         neighbors = 0
                         for u in all_units:
                             if u.alive and (u.row, u.col) != (r, c):
@@ -705,21 +777,29 @@ class CombatUnit:
                             best_hex = (r, c)
 
             if best_hex:
-                # Start jump animation/state
+                # Reserve target hex
+                reserved_positions.add(best_hex)
+
+                # Start jump: mark state and time
                 self.is_jumping = True
                 self.jump_start_time = current_time
                 self.jump_target_pos = best_hex
-                print(f"🚀 {self.card.name} starts jumping towards {best_hex}!")
+                print(f"🚀 {self.card.name} [{self.owner.name}] starts jumping towards {best_hex}!")
+                return False  # Skip attack during jump start
 
-                # Skip normal attack this turn while jumping
-                return False
+        # Normal melee attack if no jump this turn
+        if target and target.alive:
+            crit = roll_crit()
+            final_damage = damage * CRIT_MULTIPLIER if crit else damage
+            if crit:
+                print(f"🔥 CRITICAL HIT! Damage multiplied to {final_damage}!")
+            print(f"⚔️ {self.card.name} [{self.owner.name}] strikes {target.card.name} [{target.owner.name}] for {final_damage} damage")
+            target.take_damage(final_damage)
+            return True
 
-        # Normal melee attack if no jump
-        print(f"⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
-        target.take_damage(damage)
-        return True
+        return False
 
-    
+
     def _royal_ghost_attack(self, target, base_damage):
         damage = base_damage
         print(f"⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
@@ -898,6 +978,26 @@ def simulate_and_visualize_combat_live(players):
     if not players or len(players) < 2 or not players[0].opponent:
         return [], None, None
 
+    # Print position and status of all units in player's field, heal all units
+    for player in players:
+        print(f"--- Units for player {player.name} ---")
+        for unit in player.field:
+            unit.restore_full_health()  # revive and restore health regardless
+            
+            alive_status = "alive" if unit.alive else "dead"
+            pos_info = f"({unit.row}, {unit.col})" if unit.row is not None and unit.col is not None else "(no position)"
+            print(f"Unit {unit.card.name} is {alive_status} with HP {unit.current_hp} at {pos_info}")
+            
+            # If unit is missing position, try placing it randomly
+            if unit.row is None or unit.col is None:
+                placed_pos = player.place_on_grid_random(unit)
+                if placed_pos is None:
+                    print(f"⚠️ WARNING: No free positions available to place {unit.card.name} for {player.name}!")
+                else:
+                    print(f"Placed missing-position unit {unit.card.name} for {player.name} at {placed_pos}")
+
+
+
     p1, p2 = players[0], players[0].opponent
     combined = combine_grids(p1, p2)
 
@@ -957,11 +1057,13 @@ def simulate_and_visualize_combat_live(players):
         moved_this_round = False
         attacked_this_round = False
 
-        def get_occupied_positions(excluding_unit=None):
+        def get_occupied_positions(units, reserved_positions=set(), excluding_unit=None):
             occupied = set()
             for unit in units:
                 if unit.alive and unit != excluding_unit:
                     occupied.add(unit.get_position())
+            # Add reserved jump target tiles as occupied to block movement/jumps
+            occupied.update(reserved_positions)
             return occupied
 
         living_units = [u for u in units if u.alive]
@@ -1034,7 +1136,7 @@ def simulate_and_visualize_combat_live(players):
 
             target_pos = unit.current_target.get_position()
             current_pos = unit.get_position()
-            occupied = get_occupied_positions(excluding_unit=unit)
+            occupied = get_occupied_positions(units, reserved_positions, excluding_unit=unit)
 
             best_move = None
             best_dist = float('inf')
@@ -1047,9 +1149,7 @@ def simulate_and_visualize_combat_live(players):
 
             if best_move:
                 next_r, next_c = best_move
-                combined[unit.row][unit.col] = None
-                combined[next_r][next_c] = unit
-                unit.move_to(next_r, next_c)
+                unit.move_to(next_r, next_c, combined)
                 unit.move_cooldown = current_time
                 moved_this_round = True
 
@@ -1057,6 +1157,10 @@ def simulate_and_visualize_combat_live(players):
         for unit in units:
             if not unit.alive and unit.row is not None and unit.col is not None:
                 combined[unit.row][unit.col] = None
+                print(f"🗑️ Removed {unit.card.name} [{unit.owner.name}] from grid at ({unit.row}, {unit.col})")
+                unit.row = None
+                unit.col = None
+
 
         # Update and remove finished projectiles
         for projectile in projectiles[:]:
@@ -1104,6 +1208,7 @@ def simulate_and_visualize_combat_live(players):
 
     pygame.quit()
     return [], winner, remaining_units
+
 
 # Bot logic functions remain the same
 def greedy_bot_logic(player, round_number):
@@ -1222,7 +1327,6 @@ def play_round(players, round_number):
                 p.take_damage(damage)
             else:  # Draw
                 print("🤝 No damage dealt due to draw!")
-            
     
     print(f"\n--- Round {round_number} Summary ---")
     for player in alive_players:
