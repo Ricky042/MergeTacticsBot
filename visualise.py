@@ -51,7 +51,7 @@ def draw_arrow(surface, start, end, colour=(255,255,255), width=3):
         y = ey - length * math.sin(angle + side * math.pi / 6)
         pygame.draw.line(surface, colour, (ex, ey), (x, y), width)
 
-def draw_grid(surface, grid, units=None, moving=None, arrows=None):
+def draw_grid(surface, grid, units=None):
     # Create fonts for drawing unit names and HP text
     font = pygame.font.SysFont(None, 20, bold=True)
     hp_font = pygame.font.SysFont(None, 18, bold=True)
@@ -60,58 +60,60 @@ def draw_grid(surface, grid, units=None, moving=None, arrows=None):
     # Build a lookup dictionary for units' current HP keyed by their grid position
     unit_hp_lookup = {}
     if units:
-        alive_units_info = []
         for u in units:
             if u.alive:
                 unit_hp_lookup[(u.row, u.col)] = u.current_hp
-                alive_units_info.append(f"{u.card.name} at ({u.row},{u.col})")
-        # Print all alive units and their positions
-        #print("🛡️ Alive units on board:", ", ".join(alive_units_info))
 
-    # Loop through each cell on the board grid
     for r in range(BOARD_ROWS):
         for c in range(BOARD_COLS):
-            # Convert hex grid coordinates to pixel coordinates on the screen
             x, y = hex_to_pixel(r, c)
 
-            # Draw the hex cell background (gray colour)
             draw_hex(surface, x, y, HEX_SIZE, (80, 80, 80))
 
-            # Draw the coordinates on the hex (small, gray text near the top-left of the hex)
             coord_text = coord_font.render(f"{r},{c}", True, (150, 150, 150))
             coord_rect = coord_text.get_rect(center=(x, y - HEX_SIZE // 2 + 10))
             surface.blit(coord_text, coord_rect)
 
-            # Get the unit in this grid cell (if any)
             cell = grid[r][c]
             if cell:
-                #print(f"Drawing unit {cell.card.name} at ({r}, {c}), alive={cell.alive}")
-                #if not cell.alive:
-                    #print(f"Warning: dead unit in grid at ({r}, {c})")
-
                 unit = cell
                 card = unit.card
                 owner = unit.owner
-
-                # Get colour for this unit's owner/player; fallback to light gray
                 colour = PLAYER_COLOURS.get(owner.name, (200, 200, 200))
 
                 cx, cy = x, y
 
-                # Draw a filled circle to represent the unit at the position
+                # --- INVIS EFFECT ---
+                if getattr(unit, "invisible", False):
+                    ghost_colour = (colour[0], colour[1], colour[2], 120)  # semi-transparent
+                    ghost_surface = pygame.Surface((HEX_SIZE, HEX_SIZE), pygame.SRCALPHA)
+                    pygame.draw.circle(ghost_surface, ghost_colour, (HEX_SIZE//2, HEX_SIZE//2), HEX_SIZE//2)
+                    surface.blit(ghost_surface, (cx - HEX_SIZE//2, cy - HEX_SIZE//2))
+
+                    # Glow outline
+                    pygame.draw.circle(surface, (180, 220, 255), (int(cx), int(cy)), HEX_SIZE // 2, 2)
+
+                    # Skip name/HP if you want invisibility to hide details
+                    continue
+
+                # Draw visible unit
                 pygame.draw.circle(surface, colour, (int(cx), int(cy)), HEX_SIZE // 2)
 
-                # Draw the card's name centered on the unit, wrapped every 8 characters
+                # --- STUNNED EFFECT ---
+                if hasattr(unit, 'status_effects') and 'stunned' in unit.status_effects:
+                    # Draw red circle outline to indicate stunned
+                    pygame.draw.circle(surface, (255, 0, 255), (int(cx), int(cy)), HEX_SIZE // 2, 3)
+
+                # Draw name (wrapped every 8 chars)
                 name = card.name
                 name_lines = [name[i:i+8] for i in range(0, len(name), 8)]
                 for i, line in enumerate(name_lines):
-                    text = font.render(line, True, (0, 0, 0))  # black text
-                    # Vertically offset each line to center multiline text
+                    text = font.render(line, True, (0, 0, 0))
                     rect = text.get_rect(center=(cx, cy + i*18 - (len(name_lines)-1)*9))
                     surface.blit(text, rect)
 
-                # Draw the current HP number above the unit
+                # Draw HP
                 hp = unit_hp_lookup.get((r, c), getattr(card, "health", 1))
-                hp_text = hp_font.render(str(hp), True, (255, 255, 255))  # white text
+                hp_text = hp_font.render(str(hp), True, (255, 255, 255))
                 hp_rect = hp_text.get_rect(center=(cx, cy - HEX_SIZE // 2 - 10))
                 surface.blit(hp_text, hp_rect)

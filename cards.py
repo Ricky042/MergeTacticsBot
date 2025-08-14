@@ -67,6 +67,7 @@ BASE_TROOP_STATS = {
     "skeleton-king": {"health": 1377, "damage": 177, "range": 1, "speed": 1, "attack_speed": 2},
     "golden-knight": {"health": 1191, "damage": 139, "range": 1, "speed": 2, "attack_speed": 1.25},
     "archer-queen": {"health": 840, "damage": 88, "range": 4, "speed": 2, "attack_speed": 1.25},
+    "skeleton": {"health": 610, "damage": 73, "range": 1, "speed": 2, "attack_speed": 1.43},
 }
 
 class Card:
