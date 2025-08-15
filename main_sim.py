@@ -168,7 +168,7 @@ class Player:
 
     def give_starting_exe(self):
         # Instead of random, always pick "Prince"
-        name = "golden-knight"
+        name = "archer-queen"
         
         # Assuming Card constructor takes (name, cost, star)
         card = Card(name, 5, star=1)  # Prince costs 2 elixir, star 1
@@ -261,6 +261,10 @@ ODD_ROW_OFFSETS = [  # odd row (1, 3, 5, ...)
 ]
 
 def hex_neighbors(row, col):
+    # Skip invalid positions
+    if row is None or col is None:
+        return []
+
     if row % 2 == 0:
         directions = EVEN_ROW_OFFSETS
     else:
@@ -294,8 +298,6 @@ def hex_distance(a, b):
                 queue.append(((nr, nc), dist + 1))
     
     return float('inf')  # No path found
-
-from collections import deque
 
 def find_path_bfs_to_range(start_pos, target_pos, attack_range, occupied_positions):
     """
@@ -359,6 +361,7 @@ class CombatUnit:
         self.last_attack_target = None  # Last target attacked, used for dash attacks
         self.dash_pending = False  # If a dash attack is pending
         self.killed_enemy_this_round = []  # Track if this unit killed an enemy this round
+        self.archer_queen_invis_triggered = False
 
     def restore_full_health(self):
         self.current_hp = self.card.health
@@ -373,34 +376,35 @@ class CombatUnit:
         self.dash_pending = False
         self.last_update_time = 0
         self.attack_count = 0
+        self.archer_queen_invis_triggered = False
 
-    def take_damage(self, damage, grid=None):
-        """
-        Apply damage to the unit. If the unit dies, mark it dead and clear its position from the grid.
-        
-        Args:
-            damage (float): Amount of damage to apply.
-            grid (list[list[Unit]]): Optional 2D grid to clear the position from immediately.
-        """
+    def take_damage(self, damage, grid=None, all_units=None):
         self.current_hp -= damage
-        print(f"💀 {self.card.name} takes {damage} damage! HP: {self.current_hp}")
-        
+        print(f"{self.card.name} (Owner: {self.owner.name}) takes {damage} damage! HP: {self.current_hp}")
+
         if self.current_hp <= 0 and self.alive:
             self.alive = False
             self.current_hp = 0
-            print(f"💀 {self.card.name} has been eliminated!")
-            
-            # Clear grid position immediately
+            print(f"💀 {self.card.name} (Owner: {self.owner.name}) has been eliminated!")
+
+            # --- CLEAR CURRENT_TARGET REFERENCES IN OTHER UNITS ---
+            if all_units is not None:
+                for unit in all_units:
+                    if getattr(unit, 'current_target', None) == self:
+                        unit.current_target = None
+                        print(f"🔹 Removed {self.card.name} (Owner: {self.owner.name}) "
+                            f"as current_target from {unit.card.name} (Owner: {unit.owner.name})")
+
+            # --- CLEAR GRID POSITION ---
             if grid is not None and self.row is not None and self.col is not None:
                 grid[self.row][self.col] = None
                 self.row, self.col = None, None
 
-            # Reset target to avoid referencing dead unit
-            self.current_target = None
-
-    
     def get_position(self):
+        if getattr(self, "row", None) is None or getattr(self, "col", None) is None:
+            return None
         return (self.row, self.col)
+
     
     def move_to(self, new_row, new_col, grid):
         rows = len(grid)
@@ -474,6 +478,7 @@ class CombatUnit:
         """Execute unit-specific attack patterns."""
         unit_name = self.card.name.lower()
         base_damage = self.get_damage()
+
         
         #if unit_name == "knight":
         #    return self._knight_attack(primary_target, base_damage)
@@ -504,7 +509,7 @@ class CombatUnit:
         elif unit_name == "mega-knight":
             return self._mega_knight_attack(primary_target, all_units, combined_grid, base_damage, reserved_positions)
         elif unit_name == "royal-ghost":
-            return self._royal_ghost_attack(primary_target, combined_grid, base_damage)
+            return self._royal_ghost_attack(primary_target, combined_grid, base_damage, all_units)
         elif unit_name == "bandit":
             return self._bandit_attack(primary_target, all_units, combined_grid, base_damage)
         elif unit_name == "goblin-machine":
@@ -513,24 +518,24 @@ class CombatUnit:
             return self._skeleton_king_attack(primary_target, all_units, combined_grid, base_damage)
         elif unit_name == "golden-knight":
             return self._golden_knight_attack(primary_target, all_units, base_damage, combined_grid)
-        #elif unit_name == "archer-queen":
-        #    return self._archer_queen_attack(primary_target, all_units, combined_grid, base_damage)
+        elif unit_name == "archer-queen":
+            return self._archer_queen_attack(primary_target, all_units, combined_grid, base_damage)
         else:
             #Default attack
-            return self._default_attack(primary_target, combined_grid, base_damage)
+            return self._default_attack(primary_target, combined_grid,  base_damage, all_units)
     
     # === UNIQUE ATTACK IMPLEMENTATIONS ===
     
     def _bomber_attack(self, target, all_units, combined_grid, base_damage):
-        is_crit = random.random() < CRIT_CHANCE
-
-        damage = base_damage * (CRIT_MULTIPLIER if is_crit else 1)
+        # --- MAIN ATTACK ---
+        is_crit_main = random.random() < CRIT_CHANCE
+        damage = base_damage * (CRIT_MULTIPLIER if is_crit_main else 1)
 
         print(f"💣 {self.card.name} strikes {target.card.name} for {damage} damage"
-            + (" (CRIT!)" if is_crit else ""))
-        target.take_damage(damage, combined_grid)
+            + (" (CRIT!)" if is_crit_main else ""))
+        target.take_damage(damage, combined_grid, all_units)
 
-        # Splash damage to adjacent enemies only
+        # --- SPLASH DAMAGE ---
         splash_targets = []
         for r, c in hex_neighbors(target.row, target.col):
             if 0 <= r < len(combined_grid) and 0 <= c < len(combined_grid[0]):
@@ -539,32 +544,35 @@ class CombatUnit:
                     splash_targets.append(unit)
 
         for unit in splash_targets:
-            splash_damage = base_damage * (CRIT_MULTIPLIER if is_crit else 1)
+            # Each splash target rolls its own crit chance
+            is_crit_splash = random.random() < CRIT_CHANCE
+            splash_damage = base_damage * (CRIT_MULTIPLIER if is_crit_splash else 1)
             print(f"💥 Splash hits {unit.card.name} for {splash_damage} damage"
-                + (" (CRIT!)" if is_crit else ""))
-            unit.take_damage(splash_damage, combined_grid)
+                + (" (CRIT!)" if is_crit_splash else ""))
+            unit.take_damage(splash_damage, combined_grid, all_units)
 
         return True
 
     def _valkyrie_attack(self, target, all_units, combined_grid, base_damage):
-        # Roll crit once per attack
-        is_crit = random.random() < CRIT_CHANCE
-        damage = base_damage * (CRIT_MULTIPLIER if is_crit else 1)
+        # --- INITIAL TARGET ---
+        is_crit_main = random.random() < CRIT_CHANCE
+        damage_main = base_damage * (CRIT_MULTIPLIER if is_crit_main else 1)
+        crit_text_main = "💥 CRIT! " if is_crit_main else ""
+        print(f"{crit_text_main}{self.card.name} strikes initial target {target.card.name} for {damage_main} damage")
+        target.take_damage(damage_main, combined_grid, all_units)
 
-        crit_text = "💥 CRIT! " if is_crit else ""
-
-        # Damage the initial target first
-        print(f"{crit_text}{self.card.name} strikes initial target {target.card.name} for {damage} damage")
-        target.take_damage(damage, combined_grid)
-
-        # Damage splash targets around self (excluding initial target)
+        # --- SPLASH TARGETS ---
         for r, c in hex_neighbors(self.row, self.col):
             if 0 <= r < len(combined_grid) and 0 <= c < len(combined_grid[0]):
                 unit = combined_grid[r][c]
                 # Check unit exists, is an enemy, and is not the initial target
                 if unit and unit.owner != self.owner and unit != target:
-                    print(f"{crit_text}{self.card.name} hits splash target {unit.card.name} for {damage} damage")
-                    unit.take_damage(damage, combined_grid)
+                    # Roll crit separately for each splash target
+                    is_crit_splash = random.random() < CRIT_CHANCE
+                    damage_splash = base_damage * (CRIT_MULTIPLIER if is_crit_splash else 1)
+                    crit_text_splash = "💥 CRIT! " if is_crit_splash else ""
+                    print(f"{crit_text_splash}{self.card.name} hits splash target {unit.card.name} for {damage_splash} damage")
+                    unit.take_damage(damage_splash, combined_grid, all_units)
 
         return True
 
@@ -695,18 +703,9 @@ class CombatUnit:
 
     def _executioner_attack(self, target, all_units, combined_grid, base_damage):
         """Executioner throws axe in straight line, pierces through target for star_level tiles, then returns."""
-        damage = base_damage
         star_level = getattr(self.card, 'star', 1)
         
         print(f"🪓 {self.card.name} throws axe at {target.card.name}!")
-        
-        # Determine if this attack crits
-        crit_chance = CRIT_CHANCE
-        crit_multiplier = CRIT_MULTIPLIER
-        is_crit = random.random() < crit_chance
-        
-        if is_crit:
-            damage = int(damage * crit_multiplier)
         
         # Get positions
         exe_pos = self.get_position()
@@ -715,26 +714,18 @@ class CombatUnit:
         # Calculate direction vector
         dx = target_pos[1] - exe_pos[1]  # col difference
         dy = target_pos[0] - exe_pos[0]  # row difference
-        
-        # Normalize direction to get unit vector
         distance = max(abs(dx), abs(dy), 1)  # Prevent division by zero
         step_x = dx / distance if distance > 0 else 0
         step_y = dy / distance if distance > 0 else 0
         
         # Trace the axe path - forward journey to target
         forward_path = []
-        current_row, current_col = exe_pos
-        
-        # Move towards target until we reach it
         for step in range(1, 10):  # Max 10 steps to prevent infinite loops
             next_row = exe_pos[0] + int(step_y * step)
             next_col = exe_pos[1] + int(step_x * step)
-            
             if not (0 <= next_row < BOARD_ROWS and 0 <= next_col < BOARD_COLS):
                 break
-                
             forward_path.append((next_row, next_col))
-            
             if (next_row, next_col) == target_pos:
                 break
         
@@ -745,10 +736,8 @@ class CombatUnit:
             for extra_step in range(1, star_level + 1):
                 pierce_row = last_pos[0] + int(step_y * extra_step)
                 pierce_col = last_pos[1] + int(step_x * extra_step)
-                
                 if not (0 <= pierce_row < BOARD_ROWS and 0 <= pierce_col < BOARD_COLS):
                     break
-                    
                 pierce_path.append((pierce_row, pierce_col))
         
         complete_forward = forward_path + pierce_path
@@ -756,31 +745,41 @@ class CombatUnit:
         full_path = complete_forward + return_path
         self.pending_dash_path = full_path 
         
+        # Map positions to units
         units_hit = {}
         hit_count = {}
-        
         for unit in all_units:
             if unit.alive and unit.owner != self.owner:
                 unit_pos = unit.get_position()
                 units_hit[unit_pos] = units_hit.get(unit_pos, []) + [unit]
                 hit_count[unit] = 0
         
+        # --- Forward pass ---
         print(f"🪓 Axe travels forward: {' → '.join([f'({r},{c})' for r, c in complete_forward])}")
         for pos in complete_forward:
             if pos in units_hit:
                 for unit in units_hit[pos]:
                     if unit.alive:
-                        print(f"💥 Axe hits {unit.card.name} on forward pass for {damage} damage!")
-                        unit.take_damage(damage, combined_grid)
+                        # Roll crit per unit
+                        is_crit = random.random() < CRIT_CHANCE
+                        damage = int(base_damage * CRIT_MULTIPLIER) if is_crit else base_damage
+                        crit_text = "💥 CRIT! " if is_crit else ""
+                        print(f"{crit_text}Axe hits {unit.card.name} on forward pass for {damage} damage!")
+                        unit.take_damage(damage, combined_grid, all_units)
                         hit_count[unit] += 1
         
+        # --- Return pass ---
         print(f"🪓 Axe returns: {' → '.join([f'({r},{c})' for r, c in return_path])}")
         for pos in return_path:
             if pos in units_hit:
                 for unit in units_hit[pos]:
                     if unit.alive:
-                        print(f"💥 Axe hits {unit.card.name} on return pass for {damage} damage!")
-                        unit.take_damage(damage, combined_grid)
+                        # Roll crit per unit
+                        is_crit = random.random() < CRIT_CHANCE
+                        damage = int(base_damage * CRIT_MULTIPLIER) if is_crit else base_damage
+                        crit_text = "💥 CRIT! " if is_crit else ""
+                        print(f"{crit_text}Axe hits {unit.card.name} on return pass for {damage} damage!")
+                        unit.take_damage(damage, combined_grid, all_units)
                         hit_count[unit] += 1
         
         total_hits = sum(hit_count.values())
@@ -790,21 +789,24 @@ class CombatUnit:
         return True
 
     def _princess_attack(self, target, all_units, combined_grid, base_damage):
-        # Roll crit once for entire attack
+        # --- Main attack ---
         is_crit = random.random() < CRIT_CHANCE
-        damage = base_damage * (CRIT_MULTIPLIER if is_crit else 1)
+        damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
         crit_text = "💥 CRIT! " if is_crit else ""
-
         print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
-        target.take_damage(damage, combined_grid)
+        target.take_damage(damage, combined_grid, all_units)
 
-        # Splash damage to enemies adjacent to the target
+        # --- Splash damage to adjacent enemies ---
         for r, c in hex_neighbors(target.row, target.col):
             if 0 <= r < len(combined_grid) and 0 <= c < len(combined_grid[0]):
                 unit = combined_grid[r][c]
                 if unit and unit.owner != self.owner:
-                    print(f"{crit_text}💥 {self.card.name} splash hits {unit.card.name} for {damage} damage")
-                    unit.take_damage(damage, combined_grid)
+                    # Roll crit per splash unit
+                    unit_crit = random.random() < CRIT_CHANCE
+                    splash_damage = base_damage * CRIT_MULTIPLIER if unit_crit else base_damage
+                    crit_text = "💥 CRIT! " if unit_crit else ""
+                    print(f"{crit_text}💥 {self.card.name} splash hits {unit.card.name} for {splash_damage} damage")
+                    unit.take_damage(splash_damage, combined_grid, all_units)
 
         return True
 
@@ -922,24 +924,28 @@ class CombatUnit:
             if crit:
                 print(f"🔥 CRITICAL HIT! Damage multiplied to {final_damage}!")
             print(f"⚔️ {self.card.name} [{self.owner.name}] strikes {target.card.name} [{target.owner.name}] for {final_damage} damage")
-            target.take_damage(final_damage, combined_grid)
+            target.take_damage(final_damage, combined_grid, all_units)
             return True
 
         return False
 
-    def _royal_ghost_attack(self, target, combined_grid, base_damage):
-        damage = base_damage
-        print(f"⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
-        target.take_damage(damage, combined_grid)
+    def _royal_ghost_attack(self, target, combined_grid, base_damage, all_units):
+        # Roll crit for this attack
+        is_crit = random.random() < CRIT_CHANCE
+        damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
+        crit_text = "💥 CRIT! " if is_crit else ""
 
-        # Track attack count
+        print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
+        target.take_damage(damage, combined_grid, all_units)
+
+        # Track attack count for invisibility
         self.attack_count += 1
         if self.attack_count >= 3:
             self.trigger_invisibility()
             self.attack_count = 0  # reset for next cycle
 
         return True
-    
+ 
     def trigger_invisibility(self):
         star_durations = {1: 1.5, 2: 2.0, 3: 2.5, 4: 3.5}
         duration = star_durations.get(self.card.star, 1.5)
@@ -997,13 +1003,13 @@ class CombatUnit:
                     for unit in all_units:
                         if unit.alive and unit.owner != self.owner and unit.get_position() == hex_pos:
                             bonus_damage = base_damage + (base_damage * dash_bonus[stars])
-                            unit.take_damage(bonus_damage, combined_grid)
+                            unit.take_damage(bonus_damage, combined_grid, all_units)
                             unit.status_effects["stunned"] = 1.0
                             print(f"💥 {unit.card.name} is stunned and takes {bonus_damage:.1f} bonus damage!")
 
                 if farthest_enemy.get_position() not in path:
                     bonus_damage = base_damage + (base_damage * dash_bonus[stars])
-                    farthest_enemy.take_damage(bonus_damage, combined_grid)
+                    farthest_enemy.take_damage(bonus_damage, combined_grid, all_units)
                     farthest_enemy.status_effects["stunned"] = 1.0
                     print(f"💥 {farthest_enemy.card.name} (final target) is stunned and takes {bonus_damage:.1f} bonus damage!")
 
@@ -1013,10 +1019,13 @@ class CombatUnit:
             return True
 
         else:
-            # Normal attack flow
-            damage = base_damage
-            print(f"⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
-            target.take_damage(damage, combined_grid)
+            # Normal attack flow with crit chance
+            is_crit = random.random() < CRIT_CHANCE
+            damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
+            crit_text = "💥 CRIT! " if is_crit else ""
+
+            print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
+            target.take_damage(damage, combined_grid, all_units)
 
             if self.last_attack_target == target:
                 self.attack_count += 1
@@ -1084,31 +1093,38 @@ class CombatUnit:
 
             for t in targets:
                 print(f"💥 {self.card.name} fires rocket at {t.card.name}!")
-                t.take_damage(base_damage * 1.5, combined_grid)       # 1.5x base damage
+                t.take_damage(base_damage * 1.5, combined_grid, all_units)       # 1.5x base damage
                 t.status_effects['stunned'] = 1.5      # 1.5 seconds stun
 
             return True  # Special attack executed
 
-        # Normal attack
-        print(f"⚔️ {self.card.name} strikes {target.card.name} for {base_damage} damage")
-        target.take_damage(base_damage, combined_grid)
+        # Normal attack with crit chance
+        is_crit = random.random() < CRIT_CHANCE
+        damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
+        crit_text = "💥 CRIT! " if is_crit else ""
+
+        print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
+        target.take_damage(damage, combined_grid, all_units)
         self.attack_count += 1
         return True
     
     def _skeleton_king_attack(self, target, all_units, combined_grid, base_damage):
         """
         Skeleton King attack:
-        - Deals base damage to primary target.
-        - Applies cone splash damage to tiles behind the target.
+        - Deals base damage to primary target (can crit individually).
+        - Applies cone splash damage to tiles behind the target (each unit rolls crit individually).
         - Spawns a skeleton at target's position if target dies.
         - Skeleton star/level matches the Skeleton King card level.
         """
         if not target.alive:
             return False
 
-        # --- PRIMARY ATTACK ---
-        print(f"⚔️ {self.card.name} strikes {target.card.name} for {base_damage} damage")
-        target.take_damage(base_damage, combined_grid)
+        # --- PRIMARY ATTACK WITH CRIT ---
+        is_crit = random.random() < CRIT_CHANCE
+        damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
+        crit_text = "💥 CRIT! " if is_crit else ""
+        print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
+        target.take_damage(damage, combined_grid, all_units)
 
         # --- CONE SPLASH DAMAGE ---
         sr, sc = self.get_position()
@@ -1123,11 +1139,14 @@ class CombatUnit:
             if (nr - tr == step_r or nc - tc == step_c):
                 for u in all_units:
                     if u.alive and u.get_position() == (nr, nc) and u != target:
-                        splash_damage = base_damage
-                        print(f"💥 {self.card.name} hits {u.card.name} in cone for {splash_damage} damage!")
-                        u.take_damage(splash_damage, combined_grid)
+                        # Each splash unit rolls crit independently
+                        splash_crit = random.random() < CRIT_CHANCE
+                        splash_damage = base_damage * CRIT_MULTIPLIER if splash_crit else base_damage
+                        splash_crit_text = "💥 CRIT! " if splash_crit else ""
+                        print(f"{splash_crit_text}{self.card.name} hits {u.card.name} in cone for {splash_damage} damage!")
+                        u.take_damage(splash_damage, combined_grid, all_units)
 
-        # Track killed enemy
+        # Track killed enemy for skeleton spawn
         if not target.alive:
             if not hasattr(self, "killed_enemy_this_round"):
                 self.killed_enemy_this_round = []
@@ -1142,16 +1161,19 @@ class CombatUnit:
     def _golden_knight_attack(self, target, all_units, base_damage, grid):
         """
         Golden Knight attack:
-        - Deals normal base damage to the target.
+        - Normal attack can crit individually.
         - If the target dies, dashes to the lowest HP enemy adjacent, dealing scaled dash damage.
         - Dash damage scales with level:
             Level 1: 50%, Level 2: 80%, Level 3: 150%, Level 4: 500%
         - Dash only damages the final target, not units along the path.
         - Continues chaining if each new target dies.
         """
-        # --- REGULAR ATTACK ---
-        print(f"⚔️ {self.card.name} attacks {target.card.name} for {base_damage} base damage")
-        target.take_damage(base_damage, grid)
+        # --- NORMAL ATTACK WITH CRIT ---
+        is_crit = random.random() < CRIT_CHANCE
+        damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
+        crit_text = "💥 CRIT! " if is_crit else ""
+        print(f"{crit_text}⚔️ {self.card.name} attacks {target.card.name} for {damage} damage")
+        target.take_damage(damage, grid, all_units)
 
         # --- DASH DAMAGE MULTIPLIER BASED ON LEVEL ---
         level = getattr(self.card, "star", 1)
@@ -1202,23 +1224,86 @@ class CombatUnit:
             self.last_position = new_pos
             self.current_target = next_target
 
-            # Deal dash damage
+            # Deal dash damage (unchanged, no crit)
             print(f"💥 {self.card.name} deals {dash_damage} dash damage to {next_target.card.name}")
-            next_target.take_damage(dash_damage, grid)
+            next_target.take_damage(dash_damage, grid, all_units)
 
             # Prepare for next chain
             current_target = next_target
 
         return True
 
-
     def _archer_queen_attack(self, target, all_units, grid, base_damage):
-        damage = base_damage
-        print(f"⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
-        target.take_damage(damage, grid)
+        """
+        Archer Queen attack:
+        - Main attack on primary target.
+        - Can hit additional units based on star level if within range.
+        - Becomes invisible for 2.5s and gains a damage bonus when at <=50% HP.
+        - Star level determines max targets and damage boost.
+        - Each hit rolls crit independently.
+        """
+
+        # --- STAR LEVEL SETTINGS ---
+        star_level = getattr(self.card, "star", 1)
+        level_settings = {
+            1: {"max_targets": 2, "damage_bonus": 0.5},
+            2: {"max_targets": 3, "damage_bonus": 0.8},
+            3: {"max_targets": 4, "damage_bonus": 1.5},
+            4: {"max_targets": 6, "damage_bonus": 5.0},
+        }
+        settings = level_settings.get(star_level, {"max_targets": 2, "damage_bonus": 0.5})
+
+        max_targets = settings["max_targets"]
+        damage_multiplier = settings["damage_bonus"]
+
+        # --- CHECK FOR INVISIBILITY TRIGGER ---
+        if not getattr(self, 'archer_queen_invis_triggered', False) and self.current_hp <= 0.5 * self.max_hp:
+            self.status_effects["invisible"] = 2.5
+            self.invisible = True
+            self.archer_queen_invis_triggered = True
+            print(f"🕵️ {self.card.name} becomes invisible for 2.5 seconds!")
+
+        # --- MAIN ATTACK ---
+        total_targets = 0
+        targets_hit = []
+
+        if target.alive and self.is_in_range_of(target):
+            # Roll crit for main target
+            is_crit = random.random() < CRIT_CHANCE
+            damage = base_damage * (1 + damage_multiplier if self.invisible else 1)
+            if is_crit:
+                damage *= CRIT_MULTIPLIER
+            crit_text = "💥 CRIT! " if is_crit else ""
+            print(f"{crit_text}⚔️ {self.card.name} hits {target.card.name} for {damage} damage")
+            target.take_damage(damage, grid, all_units)
+            targets_hit.append(target)
+            total_targets += 1
+
+        # --- ADDITIONAL TARGETS ---
+        # Only consider living, visible units that are not the main target
+        living_enemies = [
+            u for u in all_units
+            if u.alive and not getattr(u, 'invisible', False) and u not in targets_hit
+        ]
+
+        for enemy in living_enemies:
+            if total_targets >= max_targets:
+                break
+            if self.is_in_range_of(enemy):
+                # Roll crit per bonus target
+                is_crit = random.random() < CRIT_CHANCE
+                damage = base_damage * (1 + damage_multiplier if self.invisible else 1)
+                if is_crit:
+                    damage *= CRIT_MULTIPLIER
+                crit_text = "💥 CRIT! " if is_crit else ""
+                print(f"{crit_text}⚔️ {self.card.name} hits {enemy.card.name} for {damage} damage (bonus target)")
+                enemy.take_damage(damage, grid, all_units)
+                targets_hit.append(enemy)
+                total_targets += 1
+
         return True
-    
-    def _default_attack(self, target, grid, base_damage):
+
+    def _default_attack(self, target, grid, base_damage, all_units):
         """Default attack for unknown units."""
         damage = base_damage
         if random.random() < 0.15:  # 15% crit chance
@@ -1226,7 +1311,7 @@ class CombatUnit:
             print(f"💥 CRITICAL! {self.card.name} deals {damage} damage to {target.card.name}")
         else:
             print(f"⚔️ {self.card.name} attacks {target.card.name} for {damage} damage")
-        target.take_damage(damage, grid)
+        target.take_damage(damage, grid, all_units)
         return True
     
     def update_status_effects(self, time_step):
@@ -1236,7 +1321,6 @@ class CombatUnit:
             self.attack_count = 0
             self.dash_pending = False
             remaining_stun = self.status_effects["stunned"]
-            print(f"😵 {self.card.name} is stunned for {remaining_stun:.2f}s more")
 
         # Update all effects
         for effect, remaining_time in list(self.status_effects.items()):
@@ -1254,7 +1338,6 @@ class CombatUnit:
             elif effect == "invisible":
                 self.invisible = False
                 print(f"👀 {self.card.name} becomes visible again!")
-
 
     def can_act(self):
         if 'stunned' in self.status_effects:
@@ -1285,6 +1368,9 @@ class CombatUnit:
     def is_in_range_of(self, target):
         """Check if target is within attack range based on movement steps."""
         if not target or not target.alive:
+            return False
+        
+        if self.row is None or self.col is None or target.row is None or target.col is None:
             return False
         
         start_pos = self.get_position()
@@ -1349,8 +1435,6 @@ class CombatUnit:
                 nearest_enemy = enemy
 
         return nearest_enemy
-
-
 
 def spawn_skeleton(pos, level, owner, all_units, combined):
     """
@@ -1531,14 +1615,19 @@ def simulate_and_visualize_combat_live(players):
                 continue
 
             # Target acquisition
-            if not unit.current_target or not unit.current_target.alive:
-                closest_enemy, _ = unit.find_closest_enemy([u for u in units if u.alive])
-                unit.current_target = closest_enemy
-                unit.is_attacking = False
-                unit.last_attack_time = None
+            if not unit.current_target or not unit.current_target.alive or getattr(unit.current_target, 'invisible', False):
+                # Only consider alive and visible enemies
+                visible_enemies = [u for u in units if u.alive and not getattr(u, 'invisible', False) and u.owner != unit.owner]
+                if visible_enemies:
+                    closest_enemy, _ = unit.find_closest_enemy(visible_enemies)
+                    unit.current_target = closest_enemy
+                    unit.is_attacking = False
+                    unit.last_attack_time = None
+
+            # Retargeting
             else:
                 new_target = unit.should_retarget(units, combined)
-                if new_target and new_target != unit.current_target:
+                if new_target and new_target != unit.current_target and not getattr(new_target, 'invisible', False):
                     print(f"🔄 {unit.card.name} is retargeting from {unit.current_target.card.name} to {new_target.card.name}")
                     unit.current_target = new_target
                     unit.last_attack_time = None
@@ -1549,48 +1638,71 @@ def simulate_and_visualize_combat_live(players):
                 if unit.last_attack_time is None:
                     unit.last_attack_time = current_time
                 elif unit.can_attack(current_time):
-                    # Perform unit-specific attack
-                    try:
-                        attack_result = unit.attack(unit.current_target, current_time, units, combined)
-                        if attack_result:
-                            unit.last_attack_time = current_time
+                    if unit and unit.current_target and unit.alive and unit.current_target.alive and not getattr(unit.current_target, 'invisible', False):
+                        # safe to attack
+                        # Perform unit-specific attack
+                        try:
                             attacker_pos = hex_to_pixel(*unit.get_position())
-                            print(f"Position of {unit.card.name} [{unit.owner.name}]: {unit.get_position()}")
                             target_pos = hex_to_pixel(*unit.current_target.get_position())
-                            colour = PLAYER_COLOURS.get(unit.owner.name, (255, 255, 255))
-                            projectiles.append(Projectile(attacker_pos, target_pos, colour))
+                            attack_result = unit.attack(unit.current_target, current_time, units, combined)
+                            if attack_result:
+                                unit.last_attack_time = current_time
+                                print(f"Position of {unit.card.name} [{unit.owner.name}]: {unit.get_position()}")
+                                colour = PLAYER_COLOURS.get(unit.owner.name, (255, 255, 255))
+                                projectiles.append(Projectile(attacker_pos, target_pos, colour))
 
-                    except Exception as e:
-                        print(f"⚠️ Attack error: {e}")
-                        unit.current_target.take_damage(unit.get_damage(), combined)
+                        except Exception as e:
+                            attacker_name = getattr(unit.card, 'name', 'Unknown')
+                            target_name = getattr(unit.current_target.card, 'name', 'Unknown') if unit.current_target else 'None'
+                            attacker_pos = unit.get_position() if hasattr(unit, 'get_position') else ('?', '?')
+                            target_pos = unit.current_target.get_position() if unit.current_target and hasattr(unit.current_target, 'get_position') else ('?', '?')
+                            attacker_owner = getattr(unit.owner, 'name', 'Unknown')
+                            target_owner = getattr(unit.current_target.owner, 'name', 'Unknown') if unit.current_target else 'None'
+                            attacker_hp = getattr(unit, 'current_hp', 'Unknown')
+                            target_hp = getattr(unit.current_target, 'current_hp', 'Unknown') if unit.current_target else 'None'
+
+                            print("⚠️ Attack error:", e)
+                            print(f"Attacker: {attacker_name} (Owner: {attacker_owner}, HP: {attacker_hp}, Pos: {attacker_pos})")
+                            print(f"Target: {target_name} (Owner: {target_owner}, HP: {target_hp}, Pos: {target_pos})")
+
+                            # Optional: prevent further crashing by only calling take_damage if current_target is valid
+                            if unit.current_target and getattr(unit.current_target, 'alive', False):
+                                unit.current_target.take_damage(unit.get_damage(), combined, all_units=units)
+          
+                    unit.last_attack_time = current_time
+
             else:
                 unit.is_attacking = False
 
             # MOVEMENT LOGIC
-            if unit.current_target and unit.current_target.alive and not unit.is_in_range_of(unit.current_target) and unit.can_move(current_time):
-                current_pos = unit.get_position()
+            if unit.current_target and unit.current_target.alive and unit.alive:
                 target_pos = unit.current_target.get_position()
-                occupied = get_occupied_positions(units, reserved_positions=None, excluding_unit=unit)
-
-                best_move = None
-                best_dist = float('inf')
-                for move_pos in hex_neighbors(current_pos[0], current_pos[1]):
+                if target_pos is None:
+                    continue
+                if not unit.is_in_range_of(unit.current_target) and unit.can_move(current_time):
                     
-                    if move_pos not in occupied:
-                        path = find_path_bfs_to_range(move_pos, target_pos, unit.card.range, occupied_positions=occupied)
-                        if path:
-                            dist = len(path) - 1
-                        else:
-                            dist = float('inf')
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_move = move_pos
-            
-                if best_move:
-                    unit.move_to(*best_move, combined)
-                    unit.move_cooldown = current_time
-                    unit.last_move_time = current_time
-                    unit.last_position = best_move
+                    current_pos = unit.get_position()
+                    occupied = get_occupied_positions(units, reserved_positions=None, excluding_unit=unit)
+
+                    best_move = None
+                    best_dist = float('inf')
+                    for move_pos in hex_neighbors(current_pos[0], current_pos[1]):
+                        
+                        if move_pos not in occupied:
+                            path = find_path_bfs_to_range(move_pos, target_pos, unit.card.range, occupied_positions=occupied)
+                            if path:
+                                dist = len(path) - 1
+                            else:
+                                dist = float('inf')
+                            if dist < best_dist:
+                                best_dist = dist
+                                best_move = move_pos
+                
+                    if best_move:
+                        unit.move_to(*best_move, combined)
+                        unit.move_cooldown = current_time
+                        unit.last_move_time = current_time
+                        unit.last_position = best_move
 
             # AFTER ATTACK/MOVE: newly spawned units are already in 'units', so they'll be processed in subsequent iterations
             i += 1  # increment manually to include new units
