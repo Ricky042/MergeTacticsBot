@@ -6,11 +6,14 @@ from merge_sim.visualise import draw_grid, hex_to_pixel, PLAYER_COLOURS, HEX_SIZ
 import pygame
 from collections import deque
 import time
+from merge_sim.modifiers import ClanSynergyManager, BrawlerSynergyManager
 
 BOARD_ROWS = 8
 BOARD_COLS = 5
 CRIT_CHANCE = 0.15
 CRIT_MULTIPLIER = 1.5
+
+bombs = []
 
 # At the top, after combining units
 reserved_positions = set()
@@ -168,10 +171,10 @@ class Player:
 
     def give_starting_exe(self):
         # Instead of random, always pick "Prince"
-        name = "archer-queen"
+        name = "giant-skeleton"
         
         # Assuming Card constructor takes (name, cost, star)
-        card = Card(name, 5, star=1)  # Prince costs 2 elixir, star 1
+        card = Card(name, 3, star=1)  # Prince costs 2 elixir, star 1
         
         unit = CombatUnit(None, None, card, owner=self)
         self.field.append(unit)
@@ -387,6 +390,21 @@ class CombatUnit:
             self.current_hp = 0
             print(f"💀 {self.card.name} (Owner: {self.owner.name}) has been eliminated!")
 
+            # --- Giant Skeleton bomb ---
+            if self.card.name.lower() == "giant-skeleton" and bombs is not None:
+                star = self.card.star
+                damage_table = {1: 200, 2: 400, 3: 800, 4: 1600}
+                bomb_damage = damage_table.get(star, 200)
+                bombs.append({
+                    "pos": self.get_position(),
+                    "damage": bomb_damage,
+                    "stun": 1.0,
+                    "timer": 1.0,   # seconds until explosion
+                    "radius": 2,
+                    "owner": self.owner  # store the Giant Skeleton's owner
+                })
+                print(f"💣 Giant Skeleton will drop a bomb for {bomb_damage} damage in 1s at {self.get_position()}")
+
             # --- CLEAR CURRENT_TARGET REFERENCES IN OTHER UNITS ---
             if all_units is not None:
                 for unit in all_units:
@@ -404,8 +422,7 @@ class CombatUnit:
         if getattr(self, "row", None) is None or getattr(self, "col", None) is None:
             return None
         return (self.row, self.col)
-
-    
+  
     def move_to(self, new_row, new_col, grid):
         rows = len(grid)
         cols = len(grid[0]) if rows > 0 else 0
@@ -447,8 +464,20 @@ class CombatUnit:
         return getattr(self.card, 'damage', 50)
     
     def get_attack_speed(self):
-        return getattr(self.card, 'attack_speed', 1.0)
-    
+        base = self.card.attack_speed
+        mult = 1.0
+
+        # Only apply Clan buff if active
+        if "clan_buff" in self.status_effects:
+            clan_manager = getattr(self.owner, "clan_manager", None)
+            if clan_manager:
+                if clan_manager.clan_count >= 4:
+                    mult *= 0.4  # 60% faster
+                elif clan_manager.clan_count >= 2:
+                    mult *= 0.7  # 30% faster
+
+        return base * mult
+
     def get_move_speed(self):
         return getattr(self.card, 'speed', 1.0)
     
@@ -1316,19 +1345,51 @@ class CombatUnit:
     
     def update_status_effects(self, time_step):
         effects_to_remove = []
+
         # Handle stun logic
         if self.status_effects.get("stunned", 0) > 0:
             self.attack_count = 0
             self.dash_pending = False
-            remaining_stun = self.status_effects["stunned"]
 
         # Update all effects
-        for effect, remaining_time in list(self.status_effects.items()):
-            new_time = remaining_time - time_step
-            if new_time <= 0:
-                effects_to_remove.append(effect)
-            else:
-                self.status_effects[effect] = new_time
+        for effect in list(self.status_effects.keys()):
+            value = self.status_effects[effect]
+
+            if effect == "stunned":
+                new_time = value - time_step
+                if new_time <= 0:
+                    effects_to_remove.append(effect)
+                else:
+                    self.status_effects[effect] = new_time
+
+            elif effect == "invisible":
+                new_time = value - time_step
+                if new_time <= 0:
+                    effects_to_remove.append(effect)
+                else:
+                    self.status_effects[effect] = new_time
+
+            elif effect == "clan_buff":
+                # simple countdown for buff duration
+                new_time = value - time_step
+                if new_time <= 0:
+                    effects_to_remove.append(effect)
+                else:
+                    self.status_effects[effect] = new_time
+
+            elif effect == "clan_heal":
+                # Spread heal over duration
+                heal_duration = self.status_effects.get("clan_heal_duration", 1)
+                heal_amount = value * (time_step / heal_duration)
+                self.current_hp = min(self.max_hp, self.current_hp + heal_amount)
+
+                # Reduce remaining heal
+                self.status_effects[effect] -= heal_amount
+                self.status_effects["clan_heal_duration"] -= time_step
+
+                if self.status_effects["clan_heal_duration"] <= 0:
+                    effects_to_remove.append("clan_heal")
+                    effects_to_remove.append("clan_heal_duration")
 
         # Remove expired effects
         for effect in effects_to_remove:
@@ -1338,6 +1399,8 @@ class CombatUnit:
             elif effect == "invisible":
                 self.invisible = False
                 print(f"👀 {self.card.name} becomes visible again!")
+            elif effect == "clan_buff":
+                print(f"✨ {self.card.name}'s Clan buff expired")
 
     def can_act(self):
         if 'stunned' in self.status_effects:
@@ -1532,6 +1595,18 @@ def simulate_and_visualize_combat_live(players):
 
     if not units:
         return [], None, None
+    
+    p1.clan_manager = ClanSynergyManager(p1)  # pass all units on the board
+    p1.clan_manager.setup_round()  # counts Clan cards at start of round
+    p2.clan_manager = ClanSynergyManager(p2)  # pass all units on the board
+    p2.clan_manager.setup_round()  # counts Clan cards at start of round
+    p1.brawler_manager = BrawlerSynergyManager(p1)
+    p2.brawler_manager = BrawlerSynergyManager(p2)
+    p1.brawler_manager.setup_round()
+    p2.brawler_manager.setup_round()
+    
+    # --- CLEAR ANY EXISTING BOMBS AT ROUND START ---
+    bombs.clear()
 
     # --- PYGAME INITIALIZATION ---
     pygame.init()
@@ -1604,6 +1679,9 @@ def simulate_and_visualize_combat_live(players):
             if not unit.alive:
                 i += 1
                 continue
+
+            # ✅ Clan synergy check  
+            unit.owner.clan_manager.trigger(unit)
 
             # Update status effects
             time_step = current_time - getattr(unit, 'last_update_time', current_time)
@@ -1703,6 +1781,30 @@ def simulate_and_visualize_combat_live(players):
                         unit.move_cooldown = current_time
                         unit.last_move_time = current_time
                         unit.last_position = best_move
+
+            # --- inside the main loop, after unit actions ---
+            for bomb in bombs[:]:  # iterate over a copy
+                bomb["timer"] -= dt  # dt = time step per frame
+
+                # Print countdown (rounded to 2 decimals for readability)
+                print(f"⏳ Bomb at {bomb['pos']} exploding in {bomb['timer']:.2f}s")
+
+                if bomb["timer"] <= 0:
+                    # Trigger explosion
+                    bomb_pos = bomb["pos"]
+                    radius = bomb["radius"]
+                    damage = bomb["damage"]
+                    stun_duration = bomb["stun"]
+
+                    for unit in units:
+                        if unit.alive and unit.owner != bomb["owner"] and hex_distance(unit.get_position(), bomb_pos) <= radius:
+                            unit.take_damage(damage, combined, units)
+                            unit.status_effects["stunned"] = max(unit.status_effects.get("stunned", 0), stun_duration)
+                            print(f"💥 Bomb hits {unit.card.name} (Owner: {unit.owner.name}) for {damage} damage and {stun_duration}s stun!")
+
+
+                    bombs.remove(bomb)
+       
 
             # AFTER ATTACK/MOVE: newly spawned units are already in 'units', so they'll be processed in subsequent iterations
             i += 1  # increment manually to include new units

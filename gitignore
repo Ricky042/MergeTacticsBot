@@ -1,7 +1,0 @@
-# Ignore everything
-*
-
-# But do not ignore these
-!main_sim.py
-!merge_sim/
-!merge_sim/**  # include all files and subfolders inside merge_sim
