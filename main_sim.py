@@ -6,7 +6,7 @@ from merge_sim.visualise import draw_grid, hex_to_pixel, PLAYER_COLOURS, HEX_SIZ
 import pygame
 from collections import deque
 import time
-from merge_sim.modifiers import ClanSynergyManager, BrawlerSynergyManager
+from merge_sim.modifiers import ClanSynergyManager, BrawlerSynergyManager, NobleSynergyManager
 
 BOARD_ROWS = 8
 BOARD_COLS = 5
@@ -171,10 +171,10 @@ class Player:
 
     def give_starting_exe(self):
         # Instead of random, always pick "Prince"
-        name = "giant-skeleton"
+        name = "golden-knight"
         
         # Assuming Card constructor takes (name, cost, star)
-        card = Card(name, 3, star=1)  # Prince costs 2 elixir, star 1
+        card = Card(name, 5, star=1)  # Prince costs 2 elixir, star 1
         
         unit = CombatUnit(None, None, card, owner=self)
         self.field.append(unit)
@@ -365,9 +365,12 @@ class CombatUnit:
         self.dash_pending = False  # If a dash attack is pending
         self.killed_enemy_this_round = []  # Track if this unit killed an enemy this round
         self.archer_queen_invis_triggered = False
+        self.noble_damage_taken_multiplier = 1.0
+        self.noble_damage_dealt_multiplier = 1.0
 
     def restore_full_health(self):
         self.current_hp = self.card.health
+        self.max_hp = self.card.health
         self.alive = True
         self.status_effects.clear()
         self.move_cooldown = 0
@@ -377,13 +380,17 @@ class CombatUnit:
         self.invisible = False
         self.last_attack_target = None
         self.dash_pending = False
+        self.killed_enemy_this_round = [] 
         self.last_update_time = 0
         self.attack_count = 0
         self.archer_queen_invis_triggered = False
+        self.noble_damage_taken_multiplier = 1.0
+        self.noble_damage_dealt_multiplier = 1.0
 
     def take_damage(self, damage, grid=None, all_units=None):
-        self.current_hp -= damage
-        print(f"{self.card.name} (Owner: {self.owner.name}) takes {damage} damage! HP: {self.current_hp}")
+        effective_damage = damage * getattr(self, "noble_damage_taken_multiplier", 1.0)
+        self.current_hp -= effective_damage
+        print(f"{self.card.name} (Owner: {self.owner.name}) takes {effective_damage} damage! HP: {self.current_hp}")
 
         if self.current_hp <= 0 and self.alive:
             self.alive = False
@@ -395,15 +402,19 @@ class CombatUnit:
                 star = self.card.star
                 damage_table = {1: 200, 2: 400, 3: 800, 4: 1600}
                 bomb_damage = damage_table.get(star, 200)
+                bomb_radius = 1 + star  # radius scales with star level
+
                 bombs.append({
                     "pos": self.get_position(),
                     "damage": bomb_damage,
                     "stun": 1.0,
                     "timer": 1.0,   # seconds until explosion
-                    "radius": 2,
+                    "radius": bomb_radius - 1, # radius checker is 1 bigger than intended
                     "owner": self.owner  # store the Giant Skeleton's owner
                 })
-                print(f"💣 Giant Skeleton will drop a bomb for {bomb_damage} damage in 1s at {self.get_position()}")
+                print(f"💣 Giant Skeleton will drop a bomb "
+                    f"for {bomb_damage} damage, radius {bomb_radius}, "
+                    f"in 1s at {self.get_position()}")
 
             # --- CLEAR CURRENT_TARGET REFERENCES IN OTHER UNITS ---
             if all_units is not None:
@@ -461,7 +472,9 @@ class CombatUnit:
         return getattr(self.card, 'range', 1)
     
     def get_damage(self):
-        return getattr(self.card, 'damage', 50)
+        base = self.card.damage
+        effective_damage = base * getattr(self, "noble_damage_dealt_multiplier", 1.0)
+        return effective_damage
     
     def get_attack_speed(self):
         base = self.card.attack_speed
@@ -1604,6 +1617,10 @@ def simulate_and_visualize_combat_live(players):
     p2.brawler_manager = BrawlerSynergyManager(p2)
     p1.brawler_manager.setup_round()
     p2.brawler_manager.setup_round()
+    p1.noble_manager = NobleSynergyManager(p1, False)
+    p2.noble_manager = NobleSynergyManager(p2, True)
+    p1.noble_manager.setup_round()
+    p2.noble_manager.setup_round()
     
     # --- CLEAR ANY EXISTING BOMBS AT ROUND START ---
     bombs.clear()

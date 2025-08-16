@@ -78,6 +78,9 @@ CARD_MODIFIERS = {
     "giant-skeleton": ["brawler", "undead"],
     "mega-knight": ["brawler", "ace"],
     "prince": ["brawler", "noble"],
+    "princess": ["ranger", "noble"],
+    "golden-knight": ["assassin", "noble"],
+    "knight": ["juggernaut", "noble"],
     # later: "royal-ghost": ["undead", "invisible"], etc.
 }
 

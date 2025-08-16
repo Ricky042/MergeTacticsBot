@@ -114,6 +114,7 @@ def draw_grid(surface, grid, units=None):
 
                 # Draw HP
                 hp = unit_hp_lookup.get((r, c), getattr(card, "health", 1))
+                hp = round(hp, 1)  # round to 1 decimal place
                 hp_text = hp_font.render(str(hp), True, (255, 255, 255))
                 hp_rect = hp_text.get_rect(center=(cx, cy - HEX_SIZE // 2 - 10))
                 surface.blit(hp_text, hp_rect)

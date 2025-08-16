@@ -84,3 +84,62 @@ class BrawlerSynergyManager:
                     unit.max_hp = int(unit.max_hp * 1.3)
                     unit.current_hp = unit.max_hp
                     print(f"✨ {unit.card.name} HP increased by 30% for team Brawler bonus")
+
+class NobleSynergyManager:
+    def __init__(self, owner, is_top_player=False):
+        self.owner = owner
+        self.noble_count = 0  # number of Noble troops at round start
+        self.is_top_player = is_top_player
+
+
+    def setup_round(self):
+        """Call at start of round to apply Noble bonuses."""
+        # Count Noble units
+        self.noble_count = sum(
+            1 for u in getattr(self.owner, "field", [])
+            if "noble" in u.card.modifiers
+        )
+
+        print(f"👑 Noble units at round start: {self.noble_count}")
+
+        # Determine bonuses based on count
+        if self.noble_count >= 4:
+            frontline_reduction = 0.4  # 40% less damage taken
+            backline_bonus = 0.4       # 40% more damage dealt
+        elif self.noble_count >= 2:
+            frontline_reduction = 0.2
+            backline_bonus = 0.2
+        else:
+            # Not enough nobles to trigger bonus
+            return
+
+        # Apply bonuses only to noble units
+        for unit in getattr(self.owner, "field", []):
+            if "noble" not in unit.card.modifiers:
+                continue  # skip non-noble units
+
+            # Determine if unit is frontline or backline relative to player
+            if self.is_top_player:
+                # Bottom player
+                frontline_rows = {2, 3}
+                backline_rows = {0, 1}
+            else:
+                # Top player
+                frontline_rows = {4, 5}
+                backline_rows = {6, 7}
+
+            if unit.row in frontline_rows:
+                unit.noble_damage_taken_multiplier = 1 - frontline_reduction
+                unit.noble_damage_dealt_multiplier = 1.0
+            elif unit.row in backline_rows:
+                unit.noble_damage_dealt_multiplier = 1 + backline_bonus
+                unit.noble_damage_taken_multiplier = 1.0
+            else:
+                # Middle row: no bonus
+                unit.noble_damage_taken_multiplier = 1.0
+                unit.noble_damage_dealt_multiplier = 1.0
+
+            print(f"🛡️ {unit.card.name} (Owner: {unit.owner.name}) "
+                  f"Noble bonus applied: "
+                  f"Damage taken x{unit.noble_damage_taken_multiplier:.2f}, "
+                  f"Damage dealt x{unit.noble_damage_dealt_multiplier:.2f}")
