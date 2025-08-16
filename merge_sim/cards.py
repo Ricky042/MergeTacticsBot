@@ -81,8 +81,24 @@ CARD_MODIFIERS = {
     "princess": ["ranger", "noble"],
     "golden-knight": ["assassin", "noble"],
     "knight": ["juggernaut", "noble"],
+    "goblin": ["goblin", "assassin"],
+    "spear-goblin": ["goblin", "thrower"],
+    "dart-goblin": ["goblin", "ranger"],
+    "goblin-machine": ["goblin", "juggernaut"],
     # later: "royal-ghost": ["undead", "invisible"], etc.
 }
+
+def create_card(name, star=1):
+        """Factory function to create a Card object from the global stats and data."""
+        name = name.lower()
+
+        if name not in CARD_STATS:
+            raise ValueError(f"Unknown card name: {name}")
+
+        cost = CARD_STATS[name]
+        card = Card(name, cost, star)
+
+        return card
 
 class Card:
     def __init__(self, name, cost, star=1):

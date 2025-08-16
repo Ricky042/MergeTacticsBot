@@ -1,3 +1,7 @@
+import random
+from .cards import create_card
+from .combat_unit import CombatUnit
+
 class ClanSynergyManager:
     def __init__(self, owner):
         self.owner = owner      # player
@@ -143,3 +147,66 @@ class NobleSynergyManager:
                   f"Noble bonus applied: "
                   f"Damage taken x{unit.noble_damage_taken_multiplier:.2f}, "
                   f"Damage dealt x{unit.noble_damage_dealt_multiplier:.2f}")
+
+class GoblinSynergyManager:
+    def __init__(self, owner):
+        self.owner = owner               # reference to player
+        self.goblin_count_last_combat = 0
+        self.pending_reward = None       # reward type to grant next buy phase
+
+    def setup_round(self):
+        """Reset at start of each round."""
+        self.goblin_count_last_combat = 0
+        self.pending_reward = None
+        goblin_names = set()
+
+        for unit in getattr(self.owner, "field", []):
+            if unit.alive and "goblin" in getattr(unit.card, "modifiers", []):
+                goblin_names.add(unit.card.name.lower())
+
+        self.goblin_count_last_combat = len(goblin_names)
+        print(f"👺 Goblins units at round start: {len(goblin_names)}")
+
+        # Decide what reward to prepare
+        if self.goblin_count_last_combat >= 4:
+            if random.random() < 0.6:
+                self.pending_reward = "high"   # Dart Goblin or Goblin Machine
+            else:
+                self.pending_reward = "mid"    # Goblin or Spear Goblin
+        elif self.goblin_count_last_combat >= 2:
+            self.pending_reward = "mid"
+        else:
+            self.pending_reward = None
+
+    def on_buy_phase_start(self, round_number):
+        """At the start of buy phase, give the pending goblin reward."""
+        if not self.pending_reward:
+            return
+
+        # Pick which goblin to spawn
+        if self.pending_reward == "mid":
+            card_name = random.choice(["goblin", "spear-goblin"])
+        elif self.pending_reward == "high":
+            card_name = random.choice(["dart-goblin", "goblin-machine"])
+        else:
+            return
+
+        # Create the card
+        new_card = create_card(card_name)
+        # Check for merges first (like buying normally)
+        merged_unit = self.owner.try_merge(new_card)
+
+        # Wrap in CombatUnit
+        new_unit = CombatUnit(row=None, col=None, card=merged_unit, owner=self.owner)
+
+        # --- Place on bench only ---
+        max_bench = 5
+        if len(self.owner.bench) < max_bench:
+            self.owner.bench.append(new_unit)
+            print(f"🟢 Goblin Synergy: {self.owner.name} gained a free {card_name} and placed on bench")
+        else:
+            # No space anywhere, discard
+            print(f"🟡 Goblin Synergy: {self.owner.name} could not place free {card_name}, no space")
+
+        # Reset reward so it doesn’t fire twice
+        self.pending_reward = None
