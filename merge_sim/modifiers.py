@@ -303,3 +303,55 @@ class UndeadSynergyManager:
         if "undead" in getattr(unit.card, "modifiers", []):
             return 1.0 + self.active_bonus
         return 1.0
+
+class AvengerSynergyManager:
+    def __init__(self, owner):
+        self.owner = owner                  # Reference to the player
+        self.avengers = []                  # List of alive Avenger units
+        self.active_bonus = 0.0             # +30% bonus if synergy active
+        self.last_standing_unit = None      # Reference to the last standing Avenger
+
+    def setup_round(self):
+        """Activate Avenger synergy at the start of combat."""
+
+        # Reset per-round state
+        self.active_bonus = 0.0
+        self.last_standing_unit = None
+
+        # Find all unique alive Avenger units
+        self.avengers = [u for u in getattr(self.owner, "field", [])
+                         if u.alive and "avenger" in getattr(u.card, "modifiers", [])]
+        unique_count = len(set(self.avengers))
+        print(f"🛡️ Avenger Synergy: {unique_count} unique Avenger units on the field.")
+
+        if unique_count >= 3:
+            self.active_bonus = 0.3
+            print(f"🛡️ Avenger Synergy active: all Avengers gain +30% damage!")
+        else:
+            self.active_bonus = 0.0
+            print(f"🛡️ Avenger Synergy inactive, less than 3 Avengers.")
+
+        self.update_last_standing()  # Check if last standing applies at start
+
+    def update_last_standing(self):
+        """Check which Avenger is last alive for double damage."""
+        alive_avengers = [u for u in self.avengers if u.alive]
+        if len(alive_avengers) == 1:
+            self.last_standing_unit = alive_avengers[0]
+        else:
+            self.last_standing_unit = None
+
+    def on_unit_death(self, unit):
+        """Call when any Avenger dies to update last-standing logic."""
+        if unit in self.avengers:
+            print(f"⚔️ Avenger {unit.card.name} died, checking last-standing bonus.")
+            self.update_last_standing()
+
+    def get_damage_multiplier(self, unit):
+        """Return damage multiplier for a given Avenger unit."""
+        if "avenger" not in getattr(unit.card, "modifiers", []):
+            return 1.0
+
+        if unit == self.last_standing_unit:
+            return 2.0  # double damage
+        return 1.0 + self.active_bonus

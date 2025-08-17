@@ -227,9 +227,15 @@ class CombatUnit:
             if undead_mult > 1.0:
                 print(f"🦴 {self.card.name} damage boosted by Undead synergy x{undead_mult:.2f}")
 
+        # --- Avenger synergy ---
+        if hasattr(self.owner, "avenger_manager"):
+            avenger_mult = self.owner.avenger_manager.get_damage_multiplier(self)
+            effective_damage *= avenger_mult
+            if avenger_mult != 1.0:
+                print(f"🛡️ {self.card.name} Avenger bonus: x{avenger_mult:.2f}")
+
         return effective_damage
 
-    
     def get_attack_speed(self):
         base = self.card.attack_speed
         mult = 1.0

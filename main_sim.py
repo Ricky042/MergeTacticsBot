@@ -20,7 +20,8 @@ from merge_sim.modifiers import (
     NobleSynergyManager,
     GoblinSynergyManager,
     ThrowerSynergyManager,
-    UndeadSynergyManager
+    UndeadSynergyManager,
+    AvengerSynergyManager
 )
 
 # --- Visualisation / Graphics ---
@@ -114,6 +115,10 @@ def simulate_and_visualize_combat_live(players):
     p2.undead_manager = UndeadSynergyManager(p2)
     p1.undead_manager.setup_round()
     p2.undead_manager.setup_round()
+    p1.avenger_manager = AvengerSynergyManager(p1)
+    p2.avenger_manager = AvengerSynergyManager(p2)
+    p1.avenger_manager.setup_round()
+    p2.avenger_manager.setup_round()
 
     # --- CLEAR ANY EXISTING BOMBS AT ROUND START ---
     bombs.clear()
@@ -192,6 +197,7 @@ def simulate_and_visualize_combat_live(players):
 
             # ✅ Clan synergy check  
             unit.owner.clan_manager.trigger(unit)
+            unit.owner.avenger_manager.update_last_standing()
 
             # Update status effects
             time_step = current_time - getattr(unit, 'last_update_time', current_time)
