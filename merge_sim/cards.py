@@ -89,7 +89,8 @@ CARD_MODIFIERS = {
     "bomber": ["thrower", "undead"],
     "royal-ghost": ["undead", "assassin"],
     "skeleton-king": ["undead", "juggernaut"],
-    "bandit": ["ace", "avenger"]
+    "bandit": ["ace", "avenger"],
+    "pekka": ["ace", "juggernaut"]
 }
 
 def create_card(name, star=1):

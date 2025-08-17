@@ -335,6 +335,8 @@ class AvengerSynergyManager:
 
     def update_last_standing(self):
         """Check which Avenger is last alive for double damage."""
+        if self.active_bonus == 0.0:
+            return
         alive_avengers = [u for u in self.avengers if u.alive]
         if len(alive_avengers) == 1:
             self.last_standing_unit = alive_avengers[0]
@@ -400,4 +402,86 @@ class RangerSynergyManager:
             return 1.0
         stacks = getattr(unit, "_ranger_stacks", 0)
         return (1.0 - self.stack_bonus) ** stacks
+
+class AceSynergyManager:
+    def __init__(self, owner):
+        self.owner = owner
+        self.captain = None
+        self.unique_ace_units = []
+        self.active = False
+        self.team_hit_speed_bonus = 0.0  # temporary +20% on kills
+        self.captain_damage_bonus = 0.0
+
+    def setup_round(self):
+        """Select Captain and apply damage bonuses based on number of Ace units."""
+        # Reset
+        self.active = False
+        self.captain = None
+        self.captain_damage_bonus = 0.0
+        self.unique_ace_units = []
+
+        # Find all alive Ace units
+        self.unique_ace_units = [u for u in getattr(self.owner, "field", [])
+                                 if u.alive and "ace" in getattr(u.card, "modifiers", [])]
+        unique_count = len(set(self.unique_ace_units))
+        print(f"🃏 Ace Synergy: {unique_count} unique Ace units on the field.")
+
+        if unique_count < 2:
+            self.active = False
+            self.captain = None
+            self.captain_damage_bonus = 0.0
+            print("🃏 Ace Synergy inactive, less than 2 Ace units.")
+            return
+
+        self.active = True
+
+        # --- Select Captain ---
+        alive_units = [u for u in getattr(self.owner, "field", []) if u.alive]
+        if not alive_units:
+            self.captain = None
+            return
+
+        # Sort by highest star first, then highest elixir, then first added
+        self.captain = sorted(alive_units, key=lambda u: (-u.card.star, -u.card.cost))[0]
+        print(f"🃏 Captain selected: {self.captain.card.name} (Stars: {self.captain.card.star}, Cost: {self.captain.card.cost})")
+
+        # --- Apply Captain damage bonus ---
+        if unique_count >= 4:
+            self.captain_damage_bonus = 0.6
+            print("🃏 Captain gains +60% damage!")
+        elif unique_count >= 2:
+            self.captain_damage_bonus = 0.3
+            print("🃏 Captain gains +30% damage!")
+
+    def get_damage_multiplier(self, unit):
+        """Return damage multiplier for a given unit."""
+        if unit == self.captain:
+            return 1.0 + self.captain_damage_bonus
+        return 1.0
+
+    def on_captain_deal_damage(self, damage_dealt):
+        """Called whenever the Captain deals damage to an enemy."""
+        if not self.active or self.captain is None:
+            return
+
+        # --- Heal Captain if 4+ Ace units ---
+        if len(self.unique_ace_units) >= 4:
+            heal_amount = 0.3 * damage_dealt
+            self.captain.current_hp = min(self.captain.current_hp + heal_amount, self.captain.max_hp)
+            print(f"🃏 Captain heals for {heal_amount} HP (30% of damage dealt)")
+
+    def on_captain_kill(self, enemy):
+        """Called whenever the Captain kills an enemy."""
+        if not self.active or self.captain is None:
+            return
+
+        print(f"🃏 Captain killed {enemy.card.name}, team gains +20% attack speed for 4s")
+
+        # Apply or refresh status effect on all alive team units
+        for unit in getattr(self.owner, "field", []):
+            if unit.alive:
+                if not hasattr(unit, "status_effects"):
+                    unit.status_effects = {}
+                # Set or refresh duration (seconds)
+                unit.status_effects["ace_hit_speed_bonus"] = 4.0
 

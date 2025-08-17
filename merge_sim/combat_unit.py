@@ -105,9 +105,17 @@ class CombatUnit:
         self._ranger_stacks = 0  # Ranger stacks for attack speed bonus
 
     def take_damage(self, damage, grid=None, all_units=None, attacker=None):
+        
         effective_damage = damage * getattr(self, "noble_damage_taken_multiplier", 1.0)
+    
         self.current_hp -= effective_damage
         print(f"{self.card.name} (Owner: {self.owner.name}) takes {effective_damage} damage! HP: {self.current_hp}")
+
+        # --- Notify Ace manager for damage dealt (heal) ---
+        if attacker and hasattr(attacker.owner, "ace_manager"):
+            ace_manager = attacker.owner.ace_manager
+            if attacker == ace_manager.captain:
+                ace_manager.on_captain_deal_damage(effective_damage)
 
         if self.current_hp <= 0 and self.alive:
             self.alive = False
@@ -128,6 +136,12 @@ class CombatUnit:
                     "owner": attacker.owner
                 })
                 print(f"🪦 Recorded kill for Skeleton King at {(self.row, self.col)}")
+
+            # --- Notify Ace manager if attacker is Captain ---
+            if attacker and hasattr(attacker.owner, "ace_manager"):
+                ace_manager = attacker.owner.ace_manager
+                if attacker == ace_manager.captain:
+                    ace_manager.on_captain_kill(self)
 
             # --- Giant Skeleton bomb ---
             if self.card.name.lower() == "giant-skeleton" and bombs is not None:
@@ -236,6 +250,13 @@ class CombatUnit:
             if avenger_mult != 1.0:
                 print(f"🛡️ {self.card.name} Avenger bonus: x{avenger_mult:.2f}")
 
+        # --- Ace synergy ---
+        if hasattr(self.owner, "ace_manager"):
+            ace_mult = self.owner.ace_manager.get_damage_multiplier(self)
+            effective_damage *= ace_mult
+            if ace_mult != 1.0:
+                print(f"🃏 {self.card.name} Ace bonus: x{ace_mult:.2f}")
+
         return effective_damage
 
     def get_attack_speed(self):
@@ -258,8 +279,11 @@ class CombatUnit:
                 ranger_mult = ranger_manager.get_attack_speed_multiplier(self)
                 mult *= ranger_mult
 
-        return base * mult
+        # --- Ace Captain hit speed bonus ---
+        if "ace_hit_speed_bonus" in getattr(self, "status_effects", {}):
+            mult *= 0.8  # +20% attack speed = attacks 20% faster (interval multiplied by 0.8)
 
+        return base * mult
 
     def get_move_speed(self):
         return getattr(self.card, 'speed', 1.0)
@@ -347,7 +371,7 @@ class CombatUnit:
         print(f"🗡️ Spear Goblin throws spear at {target.card.name} for {damage:.1f} damage"
             + (" (CRIT!)" if is_crit else ""))
 
-        target.take_damage(damage, combined_grid, all_units)
+        target.take_damage(damage, combined_grid, all_units, attacker=self)
         return True
 
     def _bomber_attack(self, target, all_units, combined_grid):
@@ -358,7 +382,7 @@ class CombatUnit:
 
         print(f"💣 {self.card.name} strikes {target.card.name} for {damage:.1f} damage"
             + (" (CRIT!)" if is_crit_main else ""))
-        target.take_damage(damage, combined_grid, all_units)
+        target.take_damage(damage, combined_grid, all_units, attacker=self)
 
         # --- SPLASH DAMAGE ---
         splash_targets = []
@@ -374,7 +398,7 @@ class CombatUnit:
             splash_damage *= CRIT_MULTIPLIER if is_crit_splash else 1
             print(f"💥 Splash hits {unit.card.name} for {splash_damage:.1f} damage"
                 + (" (CRIT!)" if is_crit_splash else ""))
-            unit.take_damage(splash_damage, combined_grid, all_units)
+            unit.take_damage(splash_damage, combined_grid, all_units, attacker=self)
 
         return True
 
@@ -384,7 +408,7 @@ class CombatUnit:
         damage_main = base_damage * (CRIT_MULTIPLIER if is_crit_main else 1)
         crit_text_main = "💥 CRIT! " if is_crit_main else ""
         print(f"{crit_text_main}{self.card.name} strikes initial target {target.card.name} for {damage_main} damage")
-        target.take_damage(damage_main, combined_grid, all_units)
+        target.take_damage(damage_main, combined_grid, all_units, attacker=self)
 
         # --- SPLASH TARGETS ---
         for r, c in hex_neighbors(self.row, self.col):
@@ -397,7 +421,7 @@ class CombatUnit:
                     damage_splash = base_damage * (CRIT_MULTIPLIER if is_crit_splash else 1)
                     crit_text_splash = "💥 CRIT! " if is_crit_splash else ""
                     print(f"{crit_text_splash}{self.card.name} hits splash target {unit.card.name} for {damage_splash} damage")
-                    unit.take_damage(damage_splash, combined_grid, all_units)
+                    unit.take_damage(damage_splash, combined_grid, all_units, attacker=self)
 
         return True
 
@@ -587,7 +611,7 @@ class CombatUnit:
                         is_crit = random.random() < CRIT_CHANCE
                         damage = base_damage * (CRIT_MULTIPLIER if is_crit else 1)
                         print(f"{'💥 CRIT! ' if is_crit else ''}Axe hits {unit.card.name} on forward pass for {damage:.1f}!")
-                        unit.take_damage(damage, combined_grid, all_units)
+                        unit.take_damage(damage, combined_grid, all_units, attacker=self)
                         hit_count[unit] += 1
 
         # --- Return pass ---
@@ -600,7 +624,7 @@ class CombatUnit:
                         is_crit = random.random() < CRIT_CHANCE
                         damage = base_damage * (CRIT_MULTIPLIER if is_crit else 1)
                         print(f"{'💥 CRIT! ' if is_crit else ''}Axe hits {unit.card.name} on return pass for {damage:.1f}!")
-                        unit.take_damage(damage, combined_grid, all_units)
+                        unit.take_damage(damage, combined_grid, all_units, attacker=self)
                         hit_count[unit] += 1
 
         total_hits = sum(hit_count.values())
@@ -615,7 +639,7 @@ class CombatUnit:
         damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
         crit_text = "💥 CRIT! " if is_crit else ""
         print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
-        target.take_damage(damage, combined_grid, all_units)
+        target.take_damage(damage, combined_grid, all_units, attacker=self)
 
         # --- Splash damage to adjacent enemies ---
         for r, c in hex_neighbors(target.row, target.col):
@@ -627,7 +651,7 @@ class CombatUnit:
                     splash_damage = base_damage * CRIT_MULTIPLIER if unit_crit else base_damage
                     crit_text = "💥 CRIT! " if unit_crit else ""
                     print(f"{crit_text}💥 {self.card.name} splash hits {unit.card.name} for {splash_damage} damage")
-                    unit.take_damage(splash_damage, combined_grid, all_units)
+                    unit.take_damage(splash_damage, combined_grid, all_units, attacker=self)
 
         return True
 
@@ -745,7 +769,7 @@ class CombatUnit:
             if crit:
                 print(f"🔥 CRITICAL HIT! Damage multiplied to {final_damage}!")
             print(f"⚔️ {self.card.name} [{self.owner.name}] strikes {target.card.name} [{target.owner.name}] for {final_damage} damage")
-            target.take_damage(final_damage, combined_grid, all_units)
+            target.take_damage(final_damage, combined_grid, all_units, attacker=self)
             return True
 
         return False
@@ -757,7 +781,7 @@ class CombatUnit:
         crit_text = "💥 CRIT! " if is_crit else ""
 
         print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
-        target.take_damage(damage, combined_grid, all_units)
+        target.take_damage(damage, combined_grid, all_units, attacker=self)
 
         # Track attack count for invisibility
         self.attack_count += 1
@@ -824,13 +848,13 @@ class CombatUnit:
                     for unit in all_units:
                         if unit.alive and unit.owner != self.owner and unit.get_position() == hex_pos:
                             bonus_damage = base_damage + (base_damage * dash_bonus[stars])
-                            unit.take_damage(bonus_damage, combined_grid, all_units)
+                            unit.take_damage(bonus_damage, combined_grid, all_units, attacker=self)
                             unit.status_effects["stunned"] = 1.0
                             print(f"💥 {unit.card.name} is stunned and takes {bonus_damage:.1f} bonus damage!")
 
                 if farthest_enemy.get_position() not in path:
                     bonus_damage = base_damage + (base_damage * dash_bonus[stars])
-                    farthest_enemy.take_damage(bonus_damage, combined_grid, all_units)
+                    farthest_enemy.take_damage(bonus_damage, combined_grid, all_units, attacker=self)
                     farthest_enemy.status_effects["stunned"] = 1.0
                     print(f"💥 {farthest_enemy.card.name} (final target) is stunned and takes {bonus_damage:.1f} bonus damage!")
 
@@ -846,7 +870,7 @@ class CombatUnit:
             crit_text = "💥 CRIT! " if is_crit else ""
 
             print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
-            target.take_damage(damage, combined_grid, all_units)
+            target.take_damage(damage, combined_grid, all_units, attacker=self)
 
             if self.last_attack_target == target:
                 self.attack_count += 1
@@ -914,7 +938,7 @@ class CombatUnit:
 
             for t in targets:
                 print(f"💥 {self.card.name} fires rocket at {t.card.name}!")
-                t.take_damage(base_damage * 1.5, combined_grid, all_units)       # 1.5x base damage
+                t.take_damage(base_damage * 1.5, combined_grid, all_units, attacker=self)       # 1.5x base damage
                 t.status_effects['stunned'] = 1.5      # 1.5 seconds stun
 
             return True  # Special attack executed
@@ -925,7 +949,7 @@ class CombatUnit:
         crit_text = "💥 CRIT! " if is_crit else ""
 
         print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
-        target.take_damage(damage, combined_grid, all_units)
+        target.take_damage(damage, combined_grid, all_units, attacker=self)
         self.attack_count += 1
         return True
     
@@ -987,7 +1011,7 @@ class CombatUnit:
         damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
         crit_text = "💥 CRIT! " if is_crit else ""
         print(f"{crit_text}⚔️ {self.card.name} attacks {target.card.name} for {damage} damage")
-        target.take_damage(damage, grid, all_units)
+        target.take_damage(damage, grid, all_units, attacker=self)
 
         # --- DASH DAMAGE MULTIPLIER BASED ON LEVEL ---
         level = getattr(self.card, "star", 1)
@@ -1040,7 +1064,7 @@ class CombatUnit:
 
             # Deal dash damage (unchanged, no crit)
             print(f"💥 {self.card.name} deals {dash_damage} dash damage to {next_target.card.name}")
-            next_target.take_damage(dash_damage, grid, all_units)
+            next_target.take_damage(dash_damage, grid, all_units, attacker=self)
 
             # Prepare for next chain
             current_target = next_target
@@ -1089,7 +1113,7 @@ class CombatUnit:
                 damage *= CRIT_MULTIPLIER
             crit_text = "💥 CRIT! " if is_crit else ""
             print(f"{crit_text}⚔️ {self.card.name} hits {target.card.name} for {damage} damage")
-            target.take_damage(damage, grid, all_units)
+            target.take_damage(damage, grid, all_units, attacker=self)
             targets_hit.append(target)
             total_targets += 1
 
@@ -1111,7 +1135,7 @@ class CombatUnit:
                     damage *= CRIT_MULTIPLIER
                 crit_text = "💥 CRIT! " if is_crit else ""
                 print(f"{crit_text}⚔️ {self.card.name} hits {enemy.card.name} for {damage} damage (bonus target)")
-                enemy.take_damage(damage, grid, all_units)
+                enemy.take_damage(damage, grid, all_units, attacker=self)
                 targets_hit.append(enemy)
                 total_targets += 1
 
@@ -1125,7 +1149,7 @@ class CombatUnit:
             print(f"💥 CRITICAL! {self.card.name} deals {damage} damage to {target.card.name}")
         else:
             print(f"⚔️ {self.card.name} attacks {target.card.name} for {damage} damage")
-        target.take_damage(damage, grid, all_units)
+        target.take_damage(damage, grid, all_units, attacker=self)
         return True
     
     def update_status_effects(self, time_step):
@@ -1140,22 +1164,7 @@ class CombatUnit:
         for effect in list(self.status_effects.keys()):
             value = self.status_effects[effect]
 
-            if effect == "stunned":
-                new_time = value - time_step
-                if new_time <= 0:
-                    effects_to_remove.append(effect)
-                else:
-                    self.status_effects[effect] = new_time
-
-            elif effect == "invisible":
-                new_time = value - time_step
-                if new_time <= 0:
-                    effects_to_remove.append(effect)
-                else:
-                    self.status_effects[effect] = new_time
-
-            elif effect == "clan_buff":
-                # simple countdown for buff duration
+            if effect in ["stunned", "invisible", "clan_buff"]:
                 new_time = value - time_step
                 if new_time <= 0:
                     effects_to_remove.append(effect)
@@ -1176,6 +1185,13 @@ class CombatUnit:
                     effects_to_remove.append("clan_heal")
                     effects_to_remove.append("clan_heal_duration")
 
+            elif effect == "ace_hit_speed_bonus":
+                new_time = value - time_step
+                if new_time <= 0:
+                    effects_to_remove.append(effect)
+                else:
+                    self.status_effects[effect] = new_time
+
         # Remove expired effects
         for effect in effects_to_remove:
             del self.status_effects[effect]
@@ -1186,6 +1202,8 @@ class CombatUnit:
                 print(f"👀 {self.card.name} becomes visible again!")
             elif effect == "clan_buff":
                 print(f"✨ {self.card.name}'s Clan buff expired")
+            elif effect == "ace_hit_speed_bonus":
+                print(f"🃏 {self.card.name}'s temporary Ace attack speed bonus expired")
 
     def can_act(self):
         if 'stunned' in self.status_effects:

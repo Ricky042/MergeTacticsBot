@@ -22,7 +22,8 @@ from merge_sim.modifiers import (
     ThrowerSynergyManager,
     UndeadSynergyManager,
     AvengerSynergyManager,
-    RangerSynergyManager
+    RangerSynergyManager,
+    AceSynergyManager
 )
 
 # --- Visualisation / Graphics ---
@@ -124,7 +125,10 @@ def simulate_and_visualize_combat_live(players):
     p2.ranger_manager = RangerSynergyManager(p2)
     p1.ranger_manager.setup_round()
     p2.ranger_manager.setup_round()
-
+    p1.ace_manager = AceSynergyManager(p1)
+    p2.ace_manager = AceSynergyManager(p2)
+    p1.ace_manager.setup_round()
+    p2.ace_manager.setup_round()
 
     # --- CLEAR ANY EXISTING BOMBS AT ROUND START ---
     bombs.clear()
@@ -268,7 +272,7 @@ def simulate_and_visualize_combat_live(players):
 
                             # Optional: prevent further crashing by only calling take_damage if current_target is valid
                             if unit.current_target and getattr(unit.current_target, 'alive', False):
-                                unit.current_target.take_damage(unit.get_damage(), combined, all_units=units)
+                                unit.current_target.take_damage(unit.get_damage(), combined, all_units=units, attacker=unit)
           
                     unit.last_attack_time = current_time
 
