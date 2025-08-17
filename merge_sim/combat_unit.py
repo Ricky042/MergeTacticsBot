@@ -85,6 +85,7 @@ class CombatUnit:
         self._ranger_stacks = 0  # Ranger stacks for attack speed bonus
         self.crit_chance = 0.15
         self.crit_mult = 1.5
+        self.juggernaut_shield_hp = 0
 
     def restore_full_health(self):
         self.current_hp = self.card.health
@@ -107,77 +108,88 @@ class CombatUnit:
         self._ranger_stacks = 0  # Ranger stacks for attack speed bonus
         self.crit_chance = 0.15
         self.crit_mult = 1.5
+        self.juggernaut_shield_hp = 0
 
     def take_damage(self, damage, grid=None, all_units=None, attacker=None):
         
         effective_damage = damage * getattr(self, "noble_damage_taken_multiplier", 1.0)
-    
-        self.current_hp -= effective_damage
-        print(f"{self.card.name} (Owner: {self.owner.name}) takes {effective_damage} damage! HP: {self.current_hp}")
 
-        # --- Notify Ace manager for damage dealt (heal) ---
-        if attacker and hasattr(attacker.owner, "ace_manager"):
-            ace_manager = attacker.owner.ace_manager
-            if attacker == ace_manager.captain:
-                ace_manager.on_captain_deal_damage(effective_damage)
+        if self.juggernaut_shield_hp > 0:
+            if effective_damage <= self.juggernaut_shield_hp:
+                self.juggernaut_shield_hp -= effective_damage
+                print(f"Shield of {self.card.name} blocks {effective_damage} damage!")
+                effective_damage = 0
+            else:
+                effective_damage -= self.juggernaut_shield_hp
+                self.juggernaut_shield_hp = 0
 
-        if self.current_hp <= 0 and self.alive:
-            self.alive = False
-            self.current_hp = 0
-            print(f"💀 {self.card.name} (Owner: {self.owner.name}) has been eliminated!")
+        if effective_damage > 0:
+            self.current_hp -= effective_damage
+            print(f"{self.card.name} (Owner: {self.owner.name}) takes {effective_damage} damage! HP: {self.current_hp}")
 
-            # --- Trigger Undead synergy ---
-            if getattr(self.owner.opponent, "undead_manager", None):
-                self.owner.opponent.undead_manager.on_enemy_death(self)
-
-            # --- Notify Skeleton King if attacker exists ---
-            if attacker and attacker.card.name.lower() == "skeleton-king":
-                if not hasattr(attacker, "killed_enemy_this_round"):
-                    attacker.killed_enemy_this_round = []
-                attacker.killed_enemy_this_round.append({
-                    "pos": (self.row, self.col),
-                    "level": getattr(attacker.card, "star", 1),
-                    "owner": attacker.owner
-                })
-                print(f"🪦 Recorded kill for Skeleton King at {(self.row, self.col)}")
-
-            # --- Notify Ace manager if attacker is Captain ---
+            # --- Notify Ace manager for damage dealt (heal) ---
             if attacker and hasattr(attacker.owner, "ace_manager"):
                 ace_manager = attacker.owner.ace_manager
                 if attacker == ace_manager.captain:
-                    ace_manager.on_captain_kill(self)
+                    ace_manager.on_captain_deal_damage(effective_damage)
 
-            # --- Giant Skeleton bomb ---
-            if self.card.name.lower() == "giant-skeleton" and bombs is not None:
-                star = self.card.star
-                damage_table = {1: 200, 2: 400, 3: 800, 4: 1600}
-                bomb_damage = damage_table.get(star, 200)
-                bomb_radius = 1 + star  # radius scales with star level
+            if self.current_hp <= 0 and self.alive:
+                self.alive = False
+                self.current_hp = 0
+                print(f"💀 {self.card.name} (Owner: {self.owner.name}) has been eliminated!")
 
-                bombs.append({
-                    "pos": self.get_position(),
-                    "damage": bomb_damage,
-                    "stun": 1.0,
-                    "timer": 1.0,   # seconds until explosion
-                    "radius": bomb_radius - 1, # radius checker is 1 bigger than intended
-                    "owner": self.owner  # store the Giant Skeleton's owner
-                })
-                print(f"💣 Giant Skeleton will drop a bomb "
-                    f"for {bomb_damage} damage, radius {bomb_radius}, "
-                    f"in 1s at {self.get_position()}")
+                # --- Trigger Undead synergy ---
+                if getattr(self.owner.opponent, "undead_manager", None):
+                    self.owner.opponent.undead_manager.on_enemy_death(self)
 
-            # --- CLEAR CURRENT_TARGET REFERENCES IN OTHER UNITS ---
-            if all_units is not None:
-                for unit in all_units:
-                    if getattr(unit, 'current_target', None) == self:
-                        unit.current_target = None
-                        print(f"🔹 Removed {self.card.name} (Owner: {self.owner.name}) "
-                            f"as current_target from {unit.card.name} (Owner: {unit.owner.name})")
+                # --- Notify Skeleton King if attacker exists ---
+                if attacker and attacker.card.name.lower() == "skeleton-king":
+                    if not hasattr(attacker, "killed_enemy_this_round"):
+                        attacker.killed_enemy_this_round = []
+                    attacker.killed_enemy_this_round.append({
+                        "pos": (self.row, self.col),
+                        "level": getattr(attacker.card, "star", 1),
+                        "owner": attacker.owner
+                    })
+                    print(f"🪦 Recorded kill for Skeleton King at {(self.row, self.col)}")
 
-            # --- CLEAR GRID POSITION ---
-            if grid is not None and self.row is not None and self.col is not None:
-                grid[self.row][self.col] = None
-                self.row, self.col = None, None
+                # --- Notify Ace manager if attacker is Captain ---
+                if attacker and hasattr(attacker.owner, "ace_manager"):
+                    ace_manager = attacker.owner.ace_manager
+                    if attacker == ace_manager.captain:
+                        ace_manager.on_captain_kill(self)
+
+                # --- Giant Skeleton bomb ---
+                if self.card.name.lower() == "giant-skeleton" and bombs is not None:
+                    star = self.card.star
+                    damage_table = {1: 200, 2: 400, 3: 800, 4: 1600}
+                    bomb_damage = damage_table.get(star, 200)
+                    bomb_radius = 1 + star  # radius scales with star level
+
+                    bombs.append({
+                        "pos": self.get_position(),
+                        "damage": bomb_damage,
+                        "stun": 1.0,
+                        "timer": 1.0,   # seconds until explosion
+                        "radius": bomb_radius - 1, # radius checker is 1 bigger than intended
+                        "owner": self.owner  # store the Giant Skeleton's owner
+                    })
+                    print(f"💣 Giant Skeleton will drop a bomb "
+                        f"for {bomb_damage} damage, radius {bomb_radius}, "
+                        f"in 1s at {self.get_position()}")
+
+                # --- CLEAR CURRENT_TARGET REFERENCES IN OTHER UNITS ---
+                if all_units is not None:
+                    for unit in all_units:
+                        if getattr(unit, 'current_target', None) == self:
+                            unit.current_target = None
+                            print(f"🔹 Removed {self.card.name} (Owner: {self.owner.name}) "
+                                f"as current_target from {unit.card.name} (Owner: {unit.owner.name})")
+
+                # --- CLEAR GRID POSITION ---
+                if grid is not None and self.row is not None and self.col is not None:
+                    grid[self.row][self.col] = None
+                    self.row, self.col = None, None
 
     def get_position(self):
         if getattr(self, "row", None) is None or getattr(self, "col", None) is None:
@@ -1168,7 +1180,7 @@ class CombatUnit:
         for effect in list(self.status_effects.keys()):
             value = self.status_effects[effect]
 
-            if effect in ["stunned", "invisible", "clan_buff"]:
+            if effect in ["stunned", "invisible", "clan_buff", "ace_hit_speed_bonus"]:
                 new_time = value - time_step
                 if new_time <= 0:
                     effects_to_remove.append(effect)
@@ -1189,10 +1201,11 @@ class CombatUnit:
                     effects_to_remove.append("clan_heal")
                     effects_to_remove.append("clan_heal_duration")
 
-            elif effect == "ace_hit_speed_bonus":
+            elif effect == "juggernaut_shield":
                 new_time = value - time_step
                 if new_time <= 0:
                     effects_to_remove.append(effect)
+                    self.juggernaut_shield_hp = 0
                 else:
                     self.status_effects[effect] = new_time
 
@@ -1208,6 +1221,8 @@ class CombatUnit:
                 print(f"✨ {self.card.name}'s Clan buff expired")
             elif effect == "ace_hit_speed_bonus":
                 print(f"🃏 {self.card.name}'s temporary Ace attack speed bonus expired")
+            elif effect == "juggernaut_shield":
+                print(f"{self.card.name}'s shield has worn off!")
 
     def can_act(self):
         if 'stunned' in self.status_effects:

@@ -549,3 +549,86 @@ class AssassinSynergyManager:
                 if not placed:
                     target_row += row_step  # move toward opponent's frontline
 
+class JuggernautSynergyManager:
+    def __init__(self, owner):
+        self.owner = owner
+        self.juggernaut_count = 0
+        self.triggered_units = set()
+
+    def setup_round(self, combined_grid, is_top_player):
+        """Called at the start of combat to apply Juggernaut shields."""
+        self.triggered_units.clear()
+        self.juggernaut_count = 0
+
+        # Count Juggernauts
+        self.juggernaut_count = len({
+            u.card.name for u in getattr(self.owner, "field", [])
+            if "juggernaut" in getattr(u.card, "modifiers", [])
+        })
+        if self.juggernaut_count == 0:
+            return
+
+        print(f"🛡️ Juggernauts at round start: {self.juggernaut_count}")
+
+        # Apply shields
+        self.apply_juggernaut_shields(combined_grid, is_top_player)
+
+    def apply_juggernaut_shields(self, combined_grid, is_top_player):
+        """Applies shields to Juggernauts and troops behind them."""
+        juggernauts = [
+            u for u in self.owner.field if "juggernaut" in u.card.modifiers
+        ]
+
+        for jug in juggernauts:
+            shield_percent = 0   # base 0%
+            if self.juggernaut_count >= 2 and self.juggernaut_count < 4:
+                shield_percent += 0.30
+            if self.juggernaut_count >= 4:
+                shield_percent += 0.60
+
+            shield_value = jug.max_hp * shield_percent
+
+            # Apply to Juggernaut itself
+            self._apply_shield(jug, shield_value)
+
+            behind_positions = self._behind_hexes(jug, is_top_player)
+
+            for (r, c) in behind_positions:
+                # Safely get the ally from the grid if in bounds
+                if 0 <= r < len(combined_grid) and 0 <= c < len(combined_grid[r]):
+                    ally = combined_grid[r][c]
+                    if ally and ally.owner == self.owner:
+                        print(f"{ally.card.name} needs a shield for being behind a unit!")
+                        shield_value = ally.max_hp * shield_percent
+                        self._apply_shield(ally, shield_value)
+
+    def _apply_shield(self, unit, shield_value):
+        """Give a shield to a unit (stackable)."""
+        unit.status_effects["juggernaut_shield"] = 12  # lasts 12s
+        unit.juggernaut_shield_hp += shield_value
+        print(f"🛡️ {unit.card.name} gains Juggernaut shield "
+              f"({shield_value:.1f}, total: {unit.juggernaut_shield_hp:.1f})")
+
+    def _behind_hexes(self, jug, is_top_player):
+        """Return the two hexes behind a Juggernaut based on row parity and team side."""
+        r, c = jug.row, jug.col
+        positions = []
+
+        if is_top_player:
+            # Top team moves *downward*, so behind = row - 1
+            if r % 2 == 0:  # indented row
+                positions.append((r - 1, c))
+                positions.append((r - 1, c + 1))
+            else:  # not indented
+                positions.append((r - 1, c - 1))
+                positions.append((r - 1, c))
+        else:
+            # Bottom team moves *upward*, so behind = row + 1
+            if r % 2 == 0:  # indented row
+                positions.append((r + 1, c))
+                positions.append((r + 1, c + 1))
+            else:  # not indented
+                positions.append((r + 1, c - 1))
+                positions.append((r + 1, c))
+
+        return [(row, col) for row, col in positions if row >= 0 and col >= 0]

@@ -24,7 +24,8 @@ from merge_sim.modifiers import (
     AvengerSynergyManager,
     RangerSynergyManager,
     AceSynergyManager,
-    AssassinSynergyManager
+    AssassinSynergyManager,
+    JuggernautSynergyManager
 )
 
 # --- Visualisation / Graphics ---
@@ -134,6 +135,10 @@ def simulate_and_visualize_combat_live(players):
     p2.assassin_manager = AssassinSynergyManager(p2)
     p1.assassin_manager.setup_round(units, combined, False)
     p2.assassin_manager.setup_round(units, combined, True)
+    p1.juggernaut_manager = JuggernautSynergyManager(p1)
+    p2.juggernaut_manager = JuggernautSynergyManager(p2)
+    p1.juggernaut_manager.setup_round(combined, False)
+    p2.juggernaut_manager.setup_round(combined, True)
 
     # --- CLEAR ANY EXISTING BOMBS AT ROUND START ---
     bombs.clear()
@@ -538,11 +543,11 @@ if __name__ == '__main__':
     ]
 
     for player in players:
-        player.give_starting_exe()
+        player.give_starting_unit()
 
     rn = 1
-    round_num = 2
-    while round_num <= 15:  # Max 10 rounds
+    round_num = 1
+    while round_num <= 20:  # Max 10 rounds
         if not play_round(players, round_num):
             break
         round_num += 1

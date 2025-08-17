@@ -123,9 +123,9 @@ class Player:
 
     def give_starting_exe(self):
         starting_units = [
-            {"name": "goblin", "cost": 2, "star": 1},
-            {"name": "golden-knight", "cost": 5, "star": 1},
-            {"name": "royal-ghost", "cost": 4, "star": 1},
+            {"name": "goblin-machine", "cost": 4, "star": 1},
+            {"name": "pekka", "cost": 3, "star": 1},
+            {"name": "knight", "cost": 2, "star": 1},
             {"name": "skeleton-king", "cost": 5, "star": 1}
         ]
 
