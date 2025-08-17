@@ -82,6 +82,7 @@ class CombatUnit:
         self.archer_queen_invis_triggered = False
         self.noble_damage_taken_multiplier = 1.0
         self.noble_damage_dealt_multiplier = 1.0
+        self._ranger_stacks = 0  # Ranger stacks for attack speed bonus
 
     def restore_full_health(self):
         self.current_hp = self.card.health
@@ -101,6 +102,7 @@ class CombatUnit:
         self.archer_queen_invis_triggered = False
         self.noble_damage_taken_multiplier = 1.0
         self.noble_damage_dealt_multiplier = 1.0
+        self._ranger_stacks = 0  # Ranger stacks for attack speed bonus
 
     def take_damage(self, damage, grid=None, all_units=None, attacker=None):
         effective_damage = damage * getattr(self, "noble_damage_taken_multiplier", 1.0)
@@ -212,7 +214,7 @@ class CombatUnit:
             and "thrower" in getattr(self.card, "modifiers", [])
             and target is not None
         ):
-            distance = hex_distance(self.row, self.col, target.row, target.col)
+            distance = hex_distance(self.get_position(), target.get_position())
             bonus_mult = 1 + (0.1 * distance)
             effective_damage *= bonus_mult
             print(f"🏹 {self.card.name} deals {effective_damage:.1f} damage (distance {distance}, +{int(distance*10)}%)")
@@ -240,7 +242,7 @@ class CombatUnit:
         base = self.card.attack_speed
         mult = 1.0
 
-        # Only apply Clan buff if active
+        # --- Clan buff ---
         if "clan_buff" in self.status_effects:
             clan_manager = getattr(self.owner, "clan_manager", None)
             if clan_manager:
@@ -249,7 +251,15 @@ class CombatUnit:
                 elif clan_manager.clan_count >= 2:
                     mult *= 0.7  # 30% faster
 
+        # --- Ranger synergy ---
+        if "ranger" in getattr(self.card, "modifiers", []):
+            ranger_manager = getattr(self.owner, "ranger_manager", None)
+            if ranger_manager:
+                ranger_mult = ranger_manager.get_attack_speed_multiplier(self)
+                mult *= ranger_mult
+
         return base * mult
+
 
     def get_move_speed(self):
         return getattr(self.card, 'speed', 1.0)

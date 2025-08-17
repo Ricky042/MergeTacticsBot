@@ -355,3 +355,49 @@ class AvengerSynergyManager:
         if unit == self.last_standing_unit:
             return 2.0  # double damage
         return 1.0 + self.active_bonus
+
+class RangerSynergyManager:
+    def __init__(self, owner):
+        self.owner = owner                 # Reference to Player
+        self.rangers = []                  # List of alive Ranger units
+        self.active = False                # Whether synergy is active
+        self.max_stacks = 15               # Maximum stacks per unit
+        self.stack_bonus = 0.15            # 15% attack speed bonus per stack
+
+    def setup_round(self):
+        """Check if synergy is active at the start of combat and reset stacks."""
+        # Reset
+        self.active = False
+        self.rangers.clear()
+
+        # Find all unique alive Ranger units
+        self.rangers = [u for u in getattr(self.owner, "field", [])
+                        if u.alive and "ranger" in getattr(u.card, "modifiers", [])]
+        unique_count = len(set(self.rangers))
+        print(f"🏹 Ranger Synergy: {unique_count} unique Rangers on the field.")
+
+        if unique_count >= 3:
+            self.active = True
+            print(f"🏹 Ranger Synergy active: Rangers gain +15% attack speed per attack, stacking up to {self.max_stacks}x.")
+        else:
+            self.active = False
+            print(f"🏹 Ranger Synergy inactive, less than 3 Rangers.")
+
+    def on_attack(self, unit):
+        """Call this whenever a Ranger attacks to increment its stack."""
+        if not self.active:
+            return
+
+        if "ranger" in getattr(unit.card, "modifiers", []):
+            current_stacks = getattr(unit, "_ranger_stacks", 0)
+            if current_stacks < self.max_stacks:
+                unit._ranger_stacks = current_stacks + 1
+                print(f"🏹 {unit.card.name} attacks! Ranger stacks: {unit._ranger_stacks}/{self.max_stacks}")
+
+    def get_attack_speed_multiplier(self, unit):
+        """Return multiplier for unit attack speed based on current stacks (exponential)."""
+        if not self.active or "ranger" not in getattr(unit.card, "modifiers", []):
+            return 1.0
+        stacks = getattr(unit, "_ranger_stacks", 0)
+        return (1.0 - self.stack_bonus) ** stacks
+

@@ -21,7 +21,8 @@ from merge_sim.modifiers import (
     GoblinSynergyManager,
     ThrowerSynergyManager,
     UndeadSynergyManager,
-    AvengerSynergyManager
+    AvengerSynergyManager,
+    RangerSynergyManager
 )
 
 # --- Visualisation / Graphics ---
@@ -119,6 +120,11 @@ def simulate_and_visualize_combat_live(players):
     p2.avenger_manager = AvengerSynergyManager(p2)
     p1.avenger_manager.setup_round()
     p2.avenger_manager.setup_round()
+    p1.ranger_manager = RangerSynergyManager(p1)
+    p2.ranger_manager = RangerSynergyManager(p2)
+    p1.ranger_manager.setup_round()
+    p2.ranger_manager.setup_round()
+
 
     # --- CLEAR ANY EXISTING BOMBS AT ROUND START ---
     bombs.clear()
@@ -239,6 +245,7 @@ def simulate_and_visualize_combat_live(players):
                             attacker_pos = hex_to_pixel(*unit.get_position())
                             target_pos = hex_to_pixel(*unit.current_target.get_position())
                             attack_result = unit.attack(unit.current_target, current_time, units, combined)
+                            unit.owner.ranger_manager.on_attack(unit)
                             if attack_result:
                                 unit.last_attack_time = current_time
                                 print(f"Position of {unit.card.name} [{unit.owner.name}]: {unit.get_position()}")
