@@ -19,7 +19,8 @@ from merge_sim.modifiers import (
     BrawlerSynergyManager,
     NobleSynergyManager,
     GoblinSynergyManager,
-    ThrowerSynergyManager
+    ThrowerSynergyManager,
+    UndeadSynergyManager
 )
 
 # --- Visualisation / Graphics ---
@@ -109,8 +110,11 @@ def simulate_and_visualize_combat_live(players):
     p2.thrower_synergy = ThrowerSynergyManager(p2)
     p1.thrower_synergy.setup_round()
     p2.thrower_synergy.setup_round()
+    p1.undead_manager = UndeadSynergyManager(p1)
+    p2.undead_manager = UndeadSynergyManager(p2)
+    p1.undead_manager.setup_round()
+    p2.undead_manager.setup_round()
 
-    
     # --- CLEAR ANY EXISTING BOMBS AT ROUND START ---
     bombs.clear()
 
@@ -217,12 +221,12 @@ def simulate_and_visualize_combat_live(players):
                     unit.last_attack_time = None
 
             # ATTACK LOGIC
-            if unit.current_target and unit.is_in_range_of(unit.current_target):
+            if unit.current_target is not None and unit.is_in_range_of(unit.current_target):
                 unit.is_attacking = True
                 if unit.last_attack_time is None:
                     unit.last_attack_time = current_time
                 elif unit.can_attack(current_time):
-                    if unit and unit.current_target and unit.alive and unit.current_target.alive and not getattr(unit.current_target, 'invisible', False):
+                    if unit is not None and unit.current_target is not None and unit.alive and unit.current_target.alive and not getattr(unit.current_target, 'invisible', False):
                         # safe to attack
                         # Perform unit-specific attack
                         try:
@@ -317,19 +321,38 @@ def simulate_and_visualize_combat_live(players):
 
         # Spawn skeletons for positions recorded by Skeleton King
         for unit in units:
-            if unit.card.name.lower() == "skeleton-king" and hasattr(unit, "killed_enemy_this_round"):
-                for killed_info in unit.killed_enemy_this_round:
-                    killed_unit = killed_info.get("unit")
-                    if killed_unit and killed_unit.owner != unit.owner and killed_unit.card.name.lower() != "skeleton":
-                        spawn_skeleton(
-                            killed_info["pos"], 
-                            killed_info["level"], 
-                            killed_info["owner"], 
-                            units,
-                            combined
-                        )
-                # Reset for next round
-                unit.killed_enemy_this_round = []
+            if unit.card.name.lower() == "skeleton-king":
+                if hasattr(unit, "killed_enemy_this_round"):
+                    for idx, killed_info in enumerate(unit.killed_enemy_this_round):
+                        print("Entered loop for Skeleton King kills")
+                        pos = killed_info.get("pos")
+                        level = killed_info.get("level")
+                        owner = killed_info.get("owner")
+                        
+                        print(f"🔹 Attempting spawn {idx+1}: pos={pos}, level={level}, owner={owner.name if owner else 'None'}")
+                        
+                        if pos is None or owner is None:
+                            print(f"⚠️ Skipping spawn: invalid position or owner!")
+                            continue
+
+                        # Check if tile is already occupied
+                        occupied_positions = {(u.row, u.col) for u in units if u.alive}
+                        if pos in occupied_positions:
+                            print(f"⚠️ Cannot spawn skeleton at {pos}, tile is occupied!")
+                            continue
+
+                        # Spawn skeleton
+                        skeleton_unit = spawn_skeleton(pos, level, owner, units, combined)
+                        if skeleton_unit:
+                            print(f"✅ Spawned skeleton at {pos} for {owner.name} (level {level})")
+                        else:
+                            print(f"❌ Failed to spawn skeleton at {pos}")
+                    
+                    # Clear after processing
+                    unit.killed_enemy_this_round = []
+                else:
+                    print(f"ℹ️ Skeleton King {unit.card.name} has no recorded kills")
+
 
         # --- UPDATE PROJECTILES ---
         for projectile in projectiles[:]:

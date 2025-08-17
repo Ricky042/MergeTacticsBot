@@ -245,3 +245,61 @@ class ThrowerSynergyManager:
         self.buffed_units.clear()
         self.thrower_active = False
 
+class UndeadSynergyManager:
+    def __init__(self, owner):
+        self.owner = owner                 # Reference to player
+        self.cursed_enemies = []           # Currently cursed enemy units
+        self.active_bonus = 0.0            # Cumulative damage bonus for all undead this round
+
+    def setup_round(self):
+        """Apply Undead synergy at the start of combat."""
+        # Find all unique alive Undead units
+        undead_units = []
+        seen_names = set()
+        for u in getattr(self.owner, "field", []):
+            if u.alive and "undead" in getattr(u.card, "modifiers", []):
+                if u.card.name.lower() not in seen_names:
+                    undead_units.append(u)
+                    seen_names.add(u.card.name.lower())
+
+        print(f"🦴 Undead units on field: {len(undead_units)} unique")
+
+        if len(undead_units) < 2:
+            print(f"🦴 Undead synergy inactive, only {len(undead_units)} undead on field.")
+            return  # Synergy does not activate
+        
+        # Determine number of enemies to curse
+        enemy_count = len(self.owner.opponent.field)
+        if len(undead_units) >= 4:
+            num_to_curse = min(3, enemy_count)
+            max_hp_cut = 0.5
+        else:
+            num_to_curse = min(2, enemy_count)
+            max_hp_cut = 0.25
+
+        # Identify highest HP enemies
+        alive_enemies = [u for u in self.owner.opponent.field if u.alive]
+        sorted_enemies = sorted(alive_enemies, key=lambda u: u.current_hp, reverse=True)
+        self.cursed_enemies = sorted_enemies[:num_to_curse]
+
+        # Apply HP reduction and mark as cursed
+        for enemy in self.cursed_enemies:
+            enemy.current_hp = min(enemy.current_hp, enemy.current_hp * (1 - max_hp_cut))
+            enemy._undead_cursed = True  # Internal flag
+            print(f"🦴 {enemy.card.name} cursed by Undead! Max HP reduced by {int(max_hp_cut*100)}%")
+
+        self.active_bonus = 0.0  # Reset bonus at start
+
+    def on_enemy_death(self, enemy):
+        """Called when an enemy dies to check for curse triggers."""
+        if getattr(enemy, "_undead_cursed", False):
+            self.active_bonus += 0.3  # +30% damage
+            print(f"🦴 {enemy.card.name} died, undead units gain +30% damage!")
+            # Optional: remove the cursed flag
+            enemy._undead_cursed = False
+
+    def get_damage_multiplier(self, unit):
+        """Return damage multiplier for a given unit based on undead synergy."""
+        if "undead" in getattr(unit.card, "modifiers", []):
+            return 1.0 + self.active_bonus
+        return 1.0

@@ -36,6 +36,8 @@ def spawn_skeleton(pos, level, owner, all_units, combined):
     Returns:
         CombatUnit or None: The spawned skeleton, or None if blocked.
     """
+    print(f"🪦 Attempting to spawn skeleton")
+
     row, col = pos
 
     # Check if tile is free
@@ -100,7 +102,7 @@ class CombatUnit:
         self.noble_damage_taken_multiplier = 1.0
         self.noble_damage_dealt_multiplier = 1.0
 
-    def take_damage(self, damage, grid=None, all_units=None):
+    def take_damage(self, damage, grid=None, all_units=None, attacker=None):
         effective_damage = damage * getattr(self, "noble_damage_taken_multiplier", 1.0)
         self.current_hp -= effective_damage
         print(f"{self.card.name} (Owner: {self.owner.name}) takes {effective_damage} damage! HP: {self.current_hp}")
@@ -109,6 +111,21 @@ class CombatUnit:
             self.alive = False
             self.current_hp = 0
             print(f"💀 {self.card.name} (Owner: {self.owner.name}) has been eliminated!")
+
+            # --- Trigger Undead synergy ---
+            if getattr(self.owner.opponent, "undead_manager", None):
+                self.owner.opponent.undead_manager.on_enemy_death(self)
+
+            # --- Notify Skeleton King if attacker exists ---
+            if attacker and attacker.card.name.lower() == "skeleton-king":
+                if not hasattr(attacker, "killed_enemy_this_round"):
+                    attacker.killed_enemy_this_round = []
+                attacker.killed_enemy_this_round.append({
+                    "pos": (self.row, self.col),
+                    "level": getattr(attacker.card, "star", 1),
+                    "owner": attacker.owner
+                })
+                print(f"🪦 Recorded kill for Skeleton King at {(self.row, self.col)}")
 
             # --- Giant Skeleton bomb ---
             if self.card.name.lower() == "giant-skeleton" and bombs is not None:
@@ -195,16 +212,23 @@ class CombatUnit:
             and "thrower" in getattr(self.card, "modifiers", [])
             and target is not None
         ):
-            # Distance in hexes between attacker and target
-            distance = hex_distance(self.get_position(), target.get_position())
-
-            # Scale damage by 10% per hex
+            distance = hex_distance(self.row, self.col, target.row, target.col)
             bonus_mult = 1 + (0.1 * distance)
             effective_damage *= bonus_mult
-            print(f"🏹 {self.card.name} deals {effective_damage:.1f} damage "
-                f"(distance {distance}, +{int(distance*10)}%)")
+            print(f"🏹 {self.card.name} deals {effective_damage:.1f} damage (distance {distance}, +{int(distance*10)}%)")
+
+        # --- Undead synergy ---
+        if (
+            hasattr(self.owner, "undead_manager")
+            and "undead" in getattr(self.card, "modifiers", [])
+        ):
+            undead_mult = self.owner.undead_manager.get_damage_multiplier(self)
+            effective_damage *= undead_mult
+            if undead_mult > 1.0:
+                print(f"🦴 {self.card.name} damage boosted by Undead synergy x{undead_mult:.2f}")
 
         return effective_damage
+
     
     def get_attack_speed(self):
         base = self.card.attack_speed
@@ -899,13 +923,16 @@ class CombatUnit:
         """
         if not target.alive:
             return False
+        
+        if target.alive:
+            target_pos = target.get_position()  # save before damage
 
         # --- PRIMARY ATTACK WITH CRIT ---
         is_crit = random.random() < CRIT_CHANCE
         damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
         crit_text = "💥 CRIT! " if is_crit else ""
         print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
-        target.take_damage(damage, combined_grid, all_units)
+        target.take_damage(damage, combined_grid, all_units, attacker=self)
 
         # --- CONE SPLASH DAMAGE ---
         sr, sc = self.get_position()
@@ -925,17 +952,7 @@ class CombatUnit:
                         splash_damage = base_damage * CRIT_MULTIPLIER if splash_crit else base_damage
                         splash_crit_text = "💥 CRIT! " if splash_crit else ""
                         print(f"{splash_crit_text}{self.card.name} hits {u.card.name} in cone for {splash_damage} damage!")
-                        u.take_damage(splash_damage, combined_grid, all_units)
-
-        # Track killed enemy for skeleton spawn
-        if not target.alive:
-            if not hasattr(self, "killed_enemy_this_round"):
-                self.killed_enemy_this_round = []
-            self.killed_enemy_this_round.append({
-                "pos": target.get_position(),
-                "level": getattr(self.card, "star", 1),
-                "owner": self.owner
-            })
+                        u.take_damage(splash_damage, combined_grid, all_units, attacker=self)
 
         return True
 
