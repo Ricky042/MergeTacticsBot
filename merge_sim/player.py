@@ -122,16 +122,19 @@ class Player:
         print(f"{self.name} starts with {unit.card.name}")
 
     def give_starting_exe(self):
-        # Instead of random, always pick "Prince"
-        name = "goblin"
-        
-        # Assuming Card constructor takes (name, cost, star)
-        card = Card(name, 2, star=1)  # Prince costs 2 elixir, star 1
-        
-        unit = CombatUnit(None, None, card, owner=self)
-        self.field.append(unit)
-        self.place_on_grid_random(unit)
-        print(f"{self.name} starts with {unit.card.name}")
+        starting_units = [
+            {"name": "executioner", "cost": 3, "star": 1},
+            {"name": "spear-goblin", "cost": 2, "star": 1},
+            {"name": "bomber", "cost": 2, "star": 1}
+        ]
+
+        for unit_info in starting_units:
+            card = Card(unit_info["name"], unit_info["cost"], star=unit_info["star"])
+            unit = CombatUnit(None, None, card, owner=self)
+            self.field.append(unit)
+            placed = self.place_on_grid_random(unit)
+            print(f"{self.name} starts with {unit.card.name} placed at {placed}")
+
 
     def display_zone(self, round_number):
         hp_display = f"❤️{self.hp}"

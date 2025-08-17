@@ -184,9 +184,26 @@ class CombatUnit:
     def get_range(self):
         return getattr(self.card, 'range', 1)
     
-    def get_damage(self):
+    def get_damage(self, target=None):
         base = self.card.damage
         effective_damage = base * getattr(self, "noble_damage_dealt_multiplier", 1.0)
+
+        # --- Thrower synergy ---
+        if (
+            hasattr(self.owner, "thrower_synergy")
+            and self.owner.thrower_synergy.thrower_active
+            and "thrower" in getattr(self.card, "modifiers", [])
+            and target is not None
+        ):
+            # Distance in hexes between attacker and target
+            distance = hex_distance(self.get_position(), target.get_position())
+
+            # Scale damage by 10% per hex
+            bonus_mult = 1 + (0.1 * distance)
+            effective_damage *= bonus_mult
+            print(f"🏹 {self.card.name} deals {effective_damage:.1f} damage "
+                f"(distance {distance}, +{int(distance*10)}%)")
+
         return effective_damage
     
     def get_attack_speed(self):
@@ -241,10 +258,10 @@ class CombatUnit:
         #    return self._archer_attack(primary_target, base_damage)
         #elif unit_name == "goblin":
         #    return self._goblin_attack(primary_target, base_damage)
-        #elif unit_name == "spear-goblin":
-        #    return self._spear_goblin_attack(primary_target, all_units, base_damage)
-        if unit_name == "bomber":
-            return self._bomber_attack(primary_target, all_units, combined_grid, base_damage)
+        if unit_name == "spear-goblin":
+            return self._spear_goblin_attack(primary_target, all_units, combined_grid)
+        elif unit_name == "bomber":
+            return self._bomber_attack(primary_target, all_units, combined_grid)
         #elif unit_name == "barbarian":
         #    return self._barbarian_attack(primary_target, base_damage)
         elif unit_name == "valkyrie":
@@ -258,7 +275,7 @@ class CombatUnit:
         #elif unit_name == "dart-goblin":
         #    return self._dart_goblin_attack(primary_target, all_units, base_damage)
         elif unit_name == "executioner":
-            return self._executioner_attack(primary_target, all_units, combined_grid, base_damage)
+            return self._executioner_attack(primary_target, all_units, combined_grid)
         elif unit_name == "princess":
             return self._princess_attack(primary_target, all_units, combined_grid, base_damage)
         elif unit_name == "mega-knight":
@@ -280,13 +297,26 @@ class CombatUnit:
             return self._default_attack(primary_target, combined_grid,  base_damage, all_units)
     
     # === UNIQUE ATTACK IMPLEMENTATIONS ===
-    
-    def _bomber_attack(self, target, all_units, combined_grid, base_damage):
+
+    def _spear_goblin_attack(self, target, all_units, combined_grid):
+        """Spear Goblin throws a spear at a single target (ranged)."""
+        base_damage = self.get_damage(target)   # ✅ synergy applies
+        is_crit = random.random() < CRIT_CHANCE
+        damage = base_damage * (CRIT_MULTIPLIER if is_crit else 1)
+
+        print(f"🗡️ Spear Goblin throws spear at {target.card.name} for {damage:.1f} damage"
+            + (" (CRIT!)" if is_crit else ""))
+
+        target.take_damage(damage, combined_grid, all_units)
+        return True
+
+    def _bomber_attack(self, target, all_units, combined_grid):
         # --- MAIN ATTACK ---
+        base_damage = self.get_damage(target)   # ✅ use synergy-aware damage
         is_crit_main = random.random() < CRIT_CHANCE
         damage = base_damage * (CRIT_MULTIPLIER if is_crit_main else 1)
 
-        print(f"💣 {self.card.name} strikes {target.card.name} for {damage} damage"
+        print(f"💣 {self.card.name} strikes {target.card.name} for {damage:.1f} damage"
             + (" (CRIT!)" if is_crit_main else ""))
         target.take_damage(damage, combined_grid, all_units)
 
@@ -299,10 +329,10 @@ class CombatUnit:
                     splash_targets.append(unit)
 
         for unit in splash_targets:
-            # Each splash target rolls its own crit chance
+            splash_damage = self.get_damage(unit)   # ✅ synergy with each splash target
             is_crit_splash = random.random() < CRIT_CHANCE
-            splash_damage = base_damage * (CRIT_MULTIPLIER if is_crit_splash else 1)
-            print(f"💥 Splash hits {unit.card.name} for {splash_damage} damage"
+            splash_damage *= CRIT_MULTIPLIER if is_crit_splash else 1
+            print(f"💥 Splash hits {unit.card.name} for {splash_damage:.1f} damage"
                 + (" (CRIT!)" if is_crit_splash else ""))
             unit.take_damage(splash_damage, combined_grid, all_units)
 
@@ -456,26 +486,25 @@ class CombatUnit:
 
         return True
 
-    def _executioner_attack(self, target, all_units, combined_grid, base_damage):
+    def _executioner_attack(self, target, all_units, combined_grid):
         """Executioner throws axe in straight line, pierces through target for star_level tiles, then returns."""
         star_level = getattr(self.card, 'star', 1)
-        
+
         print(f"🪓 {self.card.name} throws axe at {target.card.name}!")
-        
-        # Get positions
+
         exe_pos = self.get_position()
         target_pos = target.get_position()
-        
-        # Calculate direction vector
-        dx = target_pos[1] - exe_pos[1]  # col difference
-        dy = target_pos[0] - exe_pos[0]  # row difference
-        distance = max(abs(dx), abs(dy), 1)  # Prevent division by zero
+
+        # Direction vector
+        dx = target_pos[1] - exe_pos[1]
+        dy = target_pos[0] - exe_pos[0]
+        distance = max(abs(dx), abs(dy), 1)
         step_x = dx / distance if distance > 0 else 0
         step_y = dy / distance if distance > 0 else 0
-        
-        # Trace the axe path - forward journey to target
+
+        # Axe forward path
         forward_path = []
-        for step in range(1, 10):  # Max 10 steps to prevent infinite loops
+        for step in range(1, 10):
             next_row = exe_pos[0] + int(step_y * step)
             next_col = exe_pos[1] + int(step_x * step)
             if not (0 <= next_row < BOARD_ROWS and 0 <= next_col < BOARD_COLS):
@@ -483,8 +512,8 @@ class CombatUnit:
             forward_path.append((next_row, next_col))
             if (next_row, next_col) == target_pos:
                 break
-        
-        # Continue past target for star_level additional tiles
+
+        # Continue past target for pierce
         pierce_path = []
         if forward_path:
             last_pos = forward_path[-1]
@@ -494,53 +523,50 @@ class CombatUnit:
                 if not (0 <= pierce_row < BOARD_ROWS and 0 <= pierce_col < BOARD_COLS):
                     break
                 pierce_path.append((pierce_row, pierce_col))
-        
+
         complete_forward = forward_path + pierce_path
         return_path = list(reversed(complete_forward))
         full_path = complete_forward + return_path
         self.pending_dash_path = full_path 
-        
+
         # Map positions to units
         units_hit = {}
         hit_count = {}
         for unit in all_units:
             if unit.alive and unit.owner != self.owner:
-                unit_pos = unit.get_position()
-                units_hit[unit_pos] = units_hit.get(unit_pos, []) + [unit]
+                units_hit.setdefault(unit.get_position(), []).append(unit)
                 hit_count[unit] = 0
-        
+
         # --- Forward pass ---
         print(f"🪓 Axe travels forward: {' → '.join([f'({r},{c})' for r, c in complete_forward])}")
         for pos in complete_forward:
             if pos in units_hit:
                 for unit in units_hit[pos]:
                     if unit.alive:
-                        # Roll crit per unit
+                        base_damage = self.get_damage(unit)  # ✅ synergy per unit
                         is_crit = random.random() < CRIT_CHANCE
-                        damage = int(base_damage * CRIT_MULTIPLIER) if is_crit else base_damage
-                        crit_text = "💥 CRIT! " if is_crit else ""
-                        print(f"{crit_text}Axe hits {unit.card.name} on forward pass for {damage} damage!")
+                        damage = base_damage * (CRIT_MULTIPLIER if is_crit else 1)
+                        print(f"{'💥 CRIT! ' if is_crit else ''}Axe hits {unit.card.name} on forward pass for {damage:.1f}!")
                         unit.take_damage(damage, combined_grid, all_units)
                         hit_count[unit] += 1
-        
+
         # --- Return pass ---
         print(f"🪓 Axe returns: {' → '.join([f'({r},{c})' for r, c in return_path])}")
         for pos in return_path:
             if pos in units_hit:
                 for unit in units_hit[pos]:
                     if unit.alive:
-                        # Roll crit per unit
+                        base_damage = self.get_damage(unit)  # ✅ synergy per unit
                         is_crit = random.random() < CRIT_CHANCE
-                        damage = int(base_damage * CRIT_MULTIPLIER) if is_crit else base_damage
-                        crit_text = "💥 CRIT! " if is_crit else ""
-                        print(f"{crit_text}Axe hits {unit.card.name} on return pass for {damage} damage!")
+                        damage = base_damage * (CRIT_MULTIPLIER if is_crit else 1)
+                        print(f"{'💥 CRIT! ' if is_crit else ''}Axe hits {unit.card.name} on return pass for {damage:.1f}!")
                         unit.take_damage(damage, combined_grid, all_units)
                         hit_count[unit] += 1
-        
+
         total_hits = sum(hit_count.values())
-        unique_targets = len([u for u in hit_count.keys() if hit_count[u] > 0])
+        unique_targets = len([u for u in hit_count if hit_count[u] > 0])
         print(f"🪓 Executioner's axe dealt {total_hits} total hits to {unique_targets} enemies!")
-        
+
         return True
 
     def _princess_attack(self, target, all_units, combined_grid, base_damage):

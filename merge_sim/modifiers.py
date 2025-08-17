@@ -210,3 +210,38 @@ class GoblinSynergyManager:
 
         # Reset reward so it doesn’t fire twice
         self.pending_reward = None
+
+class ThrowerSynergyManager:
+    def __init__(self, owner):
+        self.owner = owner
+        self.thrower_active = False
+        self.buffed_units = []   # <<< initialize this list here
+
+    def setup_round(self):
+        """Apply thrower buffs when 3 unique throwers are present."""
+        thrower_units = [
+            u for u in getattr(self.owner, "field", [])
+            if "thrower" in getattr(u.card, "modifiers", [])
+        ]
+        unique_throwers = {u.card.name for u in thrower_units}
+
+        print(f"🏹 {self.owner.name} has {len(unique_throwers)} unique throwers at start of round")
+
+
+        if len(unique_throwers) >= 3:
+            self.thrower_active = True
+            for u in thrower_units:
+                if not getattr(u, "_thrower_buffed", False):
+                    u.card.range += 1
+                    u._thrower_buffed = True
+                    self.buffed_units.append(u)
+
+    def reset_synergy(self):
+        """Undo thrower buffs at end of combat."""
+        for unit in self.buffed_units:
+            if getattr(unit, "_thrower_buffed", False):
+                unit.card.range -= 1
+                unit._thrower_buffed = False
+        self.buffed_units.clear()
+        self.thrower_active = False
+

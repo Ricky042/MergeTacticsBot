@@ -18,7 +18,8 @@ from merge_sim.modifiers import (
     ClanSynergyManager,
     BrawlerSynergyManager,
     NobleSynergyManager,
-    GoblinSynergyManager
+    GoblinSynergyManager,
+    ThrowerSynergyManager
 )
 
 # --- Visualisation / Graphics ---
@@ -104,6 +105,11 @@ def simulate_and_visualize_combat_live(players):
     p2.goblin_manager = GoblinSynergyManager(p2)
     p1.goblin_manager.setup_round()
     p2.goblin_manager.setup_round()
+    p1.thrower_synergy = ThrowerSynergyManager(p1)
+    p2.thrower_synergy = ThrowerSynergyManager(p2)
+    p1.thrower_synergy.setup_round()
+    p2.thrower_synergy.setup_round()
+
     
     # --- CLEAR ANY EXISTING BOMBS AT ROUND START ---
     bombs.clear()
@@ -359,6 +365,8 @@ def simulate_and_visualize_combat_live(players):
 
     p1.goblin_manager.on_buy_phase_start(rn)
     p2.goblin_manager.on_buy_phase_start(rn) 
+    p1.thrower_synergy.reset_synergy()
+    p2.thrower_synergy.reset_synergy()
     pygame.quit()
     return [], winner, remaining_units
 
@@ -488,8 +496,8 @@ if __name__ == '__main__':
         player.give_starting_exe()
 
     rn = 1
-    round_num = 1
-    while round_num <= 10:  # Max 10 rounds
+    round_num = 2
+    while round_num <= 15:  # Max 10 rounds
         if not play_round(players, round_num):
             break
         round_num += 1

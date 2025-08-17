@@ -85,6 +85,8 @@ CARD_MODIFIERS = {
     "spear-goblin": ["goblin", "thrower"],
     "dart-goblin": ["goblin", "ranger"],
     "goblin-machine": ["goblin", "juggernaut"],
+    "executioner": ["thrower", "ace"],
+    "bomber": ["thrower", "undead"],
     # later: "royal-ghost": ["undead", "invisible"], etc.
 }
 
