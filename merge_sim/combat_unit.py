@@ -83,6 +83,8 @@ class CombatUnit:
         self.noble_damage_taken_multiplier = 1.0
         self.noble_damage_dealt_multiplier = 1.0
         self._ranger_stacks = 0  # Ranger stacks for attack speed bonus
+        self.crit_chance = 0.15
+        self.crit_mult = 1.5
 
     def restore_full_health(self):
         self.current_hp = self.card.health
@@ -103,6 +105,8 @@ class CombatUnit:
         self.noble_damage_taken_multiplier = 1.0
         self.noble_damage_dealt_multiplier = 1.0
         self._ranger_stacks = 0  # Ranger stacks for attack speed bonus
+        self.crit_chance = 0.15
+        self.crit_mult = 1.5
 
     def take_damage(self, damage, grid=None, all_units=None, attacker=None):
         
@@ -776,8 +780,8 @@ class CombatUnit:
 
     def _royal_ghost_attack(self, target, combined_grid, base_damage, all_units):
         # Roll crit for this attack
-        is_crit = random.random() < CRIT_CHANCE
-        damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
+        is_crit = random.random() < self.crit_chance
+        damage = base_damage * self.crit_mult if is_crit else base_damage
         crit_text = "💥 CRIT! " if is_crit else ""
 
         print(f"{crit_text}⚔️ {self.card.name} strikes {target.card.name} for {damage} damage")
@@ -1007,8 +1011,8 @@ class CombatUnit:
         - Continues chaining if each new target dies.
         """
         # --- NORMAL ATTACK WITH CRIT ---
-        is_crit = random.random() < CRIT_CHANCE
-        damage = base_damage * CRIT_MULTIPLIER if is_crit else base_damage
+        is_crit = random.random() < self.crit_chance
+        damage = base_damage * self.crit_mult if is_crit else base_damage
         crit_text = "💥 CRIT! " if is_crit else ""
         print(f"{crit_text}⚔️ {self.card.name} attacks {target.card.name} for {damage} damage")
         target.take_damage(damage, grid, all_units, attacker=self)
@@ -1144,8 +1148,8 @@ class CombatUnit:
     def _default_attack(self, target, grid, base_damage, all_units):
         """Default attack for unknown units."""
         damage = base_damage
-        if random.random() < 0.15:  # 15% crit chance
-            damage = int(damage * 1.5)
+        if random.random() < self.crit_chance:  # 15% crit chance
+            damage = int(damage * self.crit_mult)
             print(f"💥 CRITICAL! {self.card.name} deals {damage} damage to {target.card.name}")
         else:
             print(f"⚔️ {self.card.name} attacks {target.card.name} for {damage} damage")

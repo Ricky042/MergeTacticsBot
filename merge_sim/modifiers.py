@@ -1,6 +1,10 @@
 import random
 from .cards import create_card
 from .combat_unit import CombatUnit
+from .constants import BOARD_ROWS, BOARD_COLS
+from .board_utils import (
+    get_occupied_positions,
+)
 
 class ClanSynergyManager:
     def __init__(self, owner):
@@ -10,10 +14,10 @@ class ClanSynergyManager:
 
     def setup_round(self):
         self.triggered_units.clear()
-        self.clan_count = sum(
-            1 for u in getattr(self.owner, "field", [])
-            if "clan" in u.card.modifiers
-        )
+        self.clan_count = len({
+            u.card.name for u in getattr(self.owner, "field", [])
+            if "clan" in getattr(u.card, "modifiers", [])
+        })
 
         print(f"🛡️ Clan units at round start: {self.clan_count}")
 
@@ -64,10 +68,11 @@ class BrawlerSynergyManager:
 
     def setup_round(self):
         """Count Brawlers at round start and apply bonuses."""
-        self.brawler_count = sum(
-            1 for u in getattr(self.owner, "field", [])
-            if "brawler" in u.card.modifiers
-        )
+        self.brawler_count = len({
+            u.card.name for u in getattr(self.owner, "field", [])
+            if "brawler" in getattr(u.card, "modifiers", [])
+        })
+
         print(f"🤜 Brawler units at round start: {self.brawler_count}")
 
         if self.brawler_count < 2:
@@ -99,10 +104,10 @@ class NobleSynergyManager:
     def setup_round(self):
         """Call at start of round to apply Noble bonuses."""
         # Count Noble units
-        self.noble_count = sum(
-            1 for u in getattr(self.owner, "field", [])
-            if "noble" in u.card.modifiers
-        )
+        self.noble_count = len({
+            u.card.name for u in getattr(self.owner, "field", [])
+            if "noble" in getattr(u.card, "modifiers", [])
+        })
 
         print(f"👑 Noble units at round start: {self.noble_count}")
 
@@ -124,11 +129,11 @@ class NobleSynergyManager:
 
             # Determine if unit is frontline or backline relative to player
             if self.is_top_player:
-                # Bottom player
+                # Reversed Player
                 frontline_rows = {2, 3}
                 backline_rows = {0, 1}
             else:
-                # Top player
+                # Normal faced
                 frontline_rows = {4, 5}
                 backline_rows = {6, 7}
 
@@ -484,4 +489,63 @@ class AceSynergyManager:
                     unit.status_effects = {}
                 # Set or refresh duration (seconds)
                 unit.status_effects["ace_hit_speed_bonus"] = 4.0
+
+class AssassinSynergyManager:
+    def __init__(self, owner):
+        self.owner = owner
+        self.active = False
+        self.assassins = []
+
+
+    def setup_round(self, units, combined_grid, is_top_player: bool):
+        # Find unique alive assassins
+        self.assassins = [u for u in getattr(self.owner, "field", [])
+                          if u.alive and "assassin" in getattr(u.card, "modifiers", [])]
+        unique_count = len(set(self.assassins))
+        print(f"🗡️ Assassin Synergy: {unique_count} unique assassins on the field.")
+
+        if unique_count >= 3:
+            self.active = True
+            print(f"🗡️ Assassin Synergy active: +35% crit chance, +35% crit damage!")
+            self.place_assassins_backline(units, combined_grid, is_top_player)
+            for assassin in self.assassins:
+                assassin.crit_chance = 0.5
+                assassin.crit_mult = 1.85
+
+        else:
+            self.active = False
+
+    def place_assassins_backline(self, units, grid, is_top_player: bool):
+        """
+        Move all unique assassins of this player to the furthest backline row of the opposing side.
+        """
+        # Target backline row: opposite side's backline
+        target_backline_row = len(grid) - 1 if is_top_player else 0
+        row_step = -1 if is_top_player else 1  # move toward opponent's frontline if row is occupied
+
+        # Filter only alive units on this player's team
+        team_units = [u for u in units if u.owner == self.owner and u.alive]
+
+        # Find all unique assassins
+        assassins = [u for u in team_units if "assassin" in getattr(u.card, "modifiers", [])]
+
+        for assassin in assassins:
+            current_col = assassin.col
+            target_row = target_backline_row
+            placed = False
+
+            # Try same column first, then left/right neighbors
+            search_cols = [current_col, current_col - 1, current_col + 1]
+            search_cols = [c for c in search_cols if 0 <= c < len(grid[0])]
+
+            while not placed and 0 <= target_row < len(grid):
+                occupied_positions = get_occupied_positions(units, reserved_positions=None, excluding_unit=assassin)
+                for col in search_cols:
+                    if (target_row, col) not in occupied_positions:
+                        assassin.move_to(target_row, col, grid)
+                        placed = True
+                        break
+
+                if not placed:
+                    target_row += row_step  # move toward opponent's frontline
 

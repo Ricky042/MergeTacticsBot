@@ -23,7 +23,8 @@ from merge_sim.modifiers import (
     UndeadSynergyManager,
     AvengerSynergyManager,
     RangerSynergyManager,
-    AceSynergyManager
+    AceSynergyManager,
+    AssassinSynergyManager
 )
 
 # --- Visualisation / Graphics ---
@@ -129,6 +130,10 @@ def simulate_and_visualize_combat_live(players):
     p2.ace_manager = AceSynergyManager(p2)
     p1.ace_manager.setup_round()
     p2.ace_manager.setup_round()
+    p1.assassin_manager = AssassinSynergyManager(p1)
+    p2.assassin_manager = AssassinSynergyManager(p2)
+    p1.assassin_manager.setup_round(units, combined, False)
+    p2.assassin_manager.setup_round(units, combined, True)
 
     # --- CLEAR ANY EXISTING BOMBS AT ROUND START ---
     bombs.clear()

@@ -123,10 +123,10 @@ class Player:
 
     def give_starting_exe(self):
         starting_units = [
-            {"name": "pekka", "cost": 3, "star": 1},
-            {"name": "mega-knight", "cost": 4, "star": 1},
-            {"name": "bandit", "cost": 4, "star": 1},
-            {"name": "executioner", "cost": 3, "star": 2},
+            {"name": "goblin", "cost": 2, "star": 1},
+            {"name": "golden-knight", "cost": 5, "star": 1},
+            {"name": "royal-ghost", "cost": 4, "star": 1},
+            {"name": "skeleton-king", "cost": 5, "star": 1}
         ]
 
         for unit_info in starting_units:
