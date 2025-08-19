@@ -1170,7 +1170,14 @@ class CombatUnit:
     
     def update_status_effects(self, time_step):
         effects_to_remove = []
-
+        card_name = getattr(self.card, "name", "").lower()
+        if card_name == "archer-queen":
+            if not getattr(self, "archer_queen_invis_triggered", False) and self.current_hp <= 0.5 * self.max_hp:
+                duration = 2.5
+                self.status_effects["invisible"] = duration
+                self.invisible = True
+                self.archer_queen_invis_triggered = True
+                print(f"🕵️ {self.card.name} auto-triggers invis at <=50% HP for {duration} seconds!")
         # Handle stun logic
         if self.status_effects.get("stunned", 0) > 0:
             self.attack_count = 0
