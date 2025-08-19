@@ -515,28 +515,22 @@ class CombatUnit:
 
         # 2) If none, BFS outward from enemy original to find nearest free tile excluding prince_dest
         if fling_pos is None:
-            visited = set()
-            q = deque()
-            # start from neighbors of (er,ec) so we don't pick (er,ec) itself
-            for nbr in hex_neighbors(er, ec):
-                if in_bounds(*nbr):
-                    q.append(nbr)
-                    visited.add(nbr)
+            prince_to_enemy_dist = hex_distance((pr, pc), (er, ec))
+            candidates = []
+            # limit search radius sensibly to avoid scanning whole board; use a radius large enough
+            max_search_radius = max(rows, cols)
+            for r in range(max(0, er - max_search_radius), min(rows, er + max_search_radius + 1)):
+                for c in range(max(0, ec - max_search_radius), min(cols, ec + max_search_radius + 1)):
+                    if not is_free_candidate((r, c)):
+                        continue
+                    # Only consider tiles that are strictly further from the prince than the enemy tile is
+                    if hex_distance((pr, pc), (r, c)) > prince_to_enemy_dist:
+                        candidates.append(((hex_distance((pr, pc), (r, c))), (r, c)))
 
-            while q and fling_pos is None:
-                r, c = q.popleft()
-                if (r, c) in visited:
-                    pass
-                # Check candidate
-                if is_free_candidate((r, c)):
-                    fling_pos = (r, c)
-                    break
-                # enqueue neighbors
-                for nbr in hex_neighbors(r, c):
-                    if in_bounds(*nbr) and nbr not in visited and nbr != prince_dest:
-                        visited.add(nbr)
-                        q.append(nbr)
-
+            if candidates:
+                # Pick the candidate that is farthest from the prince (max distance), tie-breaker arbitrary
+                candidates.sort(reverse=True, key=lambda x: x[0])
+                fling_pos = candidates[0][1]
         # If still none found, revert grid and abort dash (safer than overlapping)
         if fling_pos is None:
             # restore saved cells
